@@ -50,7 +50,27 @@ UART_HandleTypeDef huart1;
 
 osThreadId defaultTaskHandle;
 /* USER CODE BEGIN PV */
+/* Framebuffer for UI */
+static uint8_t g_framebuffer[1024];
 
+/* Button configuration – modify according to actual hardware */
+static const ui_input_binding_t my_buttons = {
+  .up = {
+    .port = GPIOA,
+    .pin = GPIO_PIN_1,
+    .active_low = true   // assume button pulls low, internal pull‑up
+  },
+  .down = {
+    .port = GPIOA,
+    .pin = GPIO_PIN_2,
+    .active_low = true
+  },
+  .press = {
+    .port = GPIOA,
+    .pin = GPIO_PIN_3,
+    .active_low = true
+  }
+};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -103,6 +123,18 @@ int main(void)
   // Initialize OLED display
   OLED_Init();
   OLED_Clear();
+  
+  // 1. Initialize UI system with framebuffer
+  ui_init(g_framebuffer);
+  
+  // 2. Bind input buttons (must be before first ui_tick)
+  if (!ui_input_bind_buttons(&my_buttons)) {
+      /* Binding failed – handle error, e.g., light an LED or safe mode */
+      Error_Handler();
+  }
+  
+  // 3. Set initial screen
+  ui_set_screen(&test_screen);
   
   /* USER CODE END 2 */
 
@@ -297,25 +329,21 @@ static void MX_GPIO_Init(void)
 void StartDefaultTask(void const * argument)
 {
   /* USER CODE BEGIN 5 */
+  uint32_t last_tick = 0;
   /* Infinite loop */
-  
-    while (1)
+  while (1)
   {
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
-		OLED_Clear();
-		OLED_ShowCHinese(0,0,0);
-		OLED_ShowCHinese(18,0,1);
-		OLED_ShowCHinese(36,0,2);
-		OLED_ShowCHinese(54,0,3);
-		OLED_ShowCHinese(72,0,4);
-		OLED_ShowCHinese(90,0,5);
-		OLED_ShowCHinese(108,0,6);
-		OLED_ShowString(6,3,"0.96' OLED TEST",16);
+    uint32_t now = HAL_GetTick();
+    /* Execute UI logic every 10 ms */
+    if (now - last_tick >= 10)
+    {
+        ui_tick();               // process input, timers, etc.
+        test_screen_update();    // update screen state
+        ui_flush();              // push framebuffer to OLED
+        last_tick = now;
+    }
+    osDelay(1);
   }
-    osDelay(300);
-  
   /* USER CODE END 5 */
 }
 

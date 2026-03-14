@@ -129,6 +129,28 @@ void OLED_Fill(u8 x_start, u8 y_start, u8 x_end, u8 y_end, u8 dot)
     }
 }
 
+/*
+ * Draw a single pixel at (x, y).
+ * t = 1 sets the pixel, t = 0 clears it.
+ * The OLED controller uses page addressing: each page is 8 vertical pixels.
+ * We set the position to the appropriate page and column, then write a
+ * byte with the corresponding bit mask. For simplicity we write only the
+ * mask; clearing writes the inverse mask which works for monochrome OLEDs.
+ */
+void OLED_DrawPoint(u8 x, u8 y, u8 t)
+{
+	if (x >= Max_Column || y >= Max_Row) return; // out of bounds guard
+	u8 page = y / 8;
+	u8 bit  = y % 8;
+	u8 mask = (1 << bit);
+	OLED_Set_Pos(x, page);
+	if (t) {
+		OLED_WR_Byte(mask, OLED_DATA);
+	} else {
+		OLED_WR_Byte(~mask, OLED_DATA);
+	}
+}
+
 
 /***********************Delay****************************************/
 void Delay_50ms(unsigned int Del_50ms)

@@ -1,111 +1,257 @@
+/**
+ * @file    ui_core.c
+ * @brief   UI 框架核心实现
+ * @note    所有配置数据自动存入 Flash (const)，状态数据存入 RAM
+ */
+
 #include "ui_core.h"
 
-/* 全局系统实例 */
+/* ================= 全局系统实例 ================= */
 ui_system_t g_ui;
 
-/* 输入配置默认值 */
+/* ================= 输入配置默认值 ================= */
 static const ui_input_cfg_t g_input_cfg = {
     .long_press_threshold_ms = 1000,
     .double_click_gap_ms = 300,
     .debounce_ms = 20
 };
 
+/* ================= 输入绑定状态 ================= */
+static ui_input_binding_t g_input_binding = {0};
+
 /* ================= 工具函数 ================= */
-static inline bool ui_rect_overlap(const ui_rect_t *a, const ui_rect_t *b) {
-    return !(a->x + a->w <= b->x || b->x + b->w <= a->x ||
-             a->y + a->h <= b->y || b->y + b->h <= a->y);
+static bool ui_read_button(const ui_button_cfg_t *cfg) {
+    if (!cfg || !cfg->port) return false;
+    bool level = (HAL_GPIO_ReadPin(cfg->port, cfg->pin) == GPIO_PIN_RESET);
+    return cfg->active_low ? level : !level;
 }
 
-static inline void ui_rect_merge(ui_rect_t *out, const ui_rect_t *a, const ui_rect_t *b) {
-    ui_coord_t x1 = (a->x < b->x) ? a->x : b->x;
-    ui_coord_t y1 = (a->y < b->y) ? a->y : b->y;
-    ui_coord_t x2 = (a->x + a->w > b->x + b->w) ? a->x + a->w : b->x + b->w;
-    ui_coord_t y2 = (a->y + a->h > b->y + b->h) ? a->y + a->h : b->y + b->h;
-    out->x = x1; out->y = y1; out->w = x2 - x1; out->h = y2 - y1;
-}
-
-/* ================= 脏队列管理 ================= */
 static void ui_dirty_add(const ui_rect_t *rect) {
+    if (!rect || rect->w == 0 || rect->h == 0) return;
+    
     if (g_ui.dirty.count >= UI_DIRTY_QUEUE_LEN) {
-        /* 队列满：简单策略 - 标记全局刷新（或丢弃，根据需求）*/
-        g_ui.dirty.count = 0;  // 降级为全刷
+        /* 队列满：降级为全刷 */
+        g_ui.dirty.count = 0;
         ui_rect_t full = {0, 0, 128, 64};
         g_ui.dirty.rects[0] = full;
         g_ui.dirty.count = 1;
         return;
     }
-    /* 尝试合并：如果新区域与现有区域重叠或相邻<2 像素，合并 */
+    
+    /* 尝试合并重叠或相邻区域 */
     for (uint8_t i = 0; i < g_ui.dirty.count; i++) {
         ui_rect_t *exist = &g_ui.dirty.rects[i];
-        if (ui_rect_overlap(rect, exist) || 
-            (abs(rect->x - (exist->x + exist->w)) < 2) ||  // 水平相邻
-            (abs(rect->y - (exist->y + exist->h)) < 2)) {  // 垂直相邻
+        if (ui_rect_overlap(rect, exist) ||
+            (abs((int)rect->x - (int)(exist->x + exist->w)) < 2) ||
+            (abs((int)rect->y - (int)(exist->y + exist->h)) < 2)) {
             ui_rect_merge(exist, exist, rect);
             return;
         }
     }
-    /* 无法合并：添加新区域 */
+    
     g_ui.dirty.rects[g_ui.dirty.count++] = *rect;
 }
 
-/* ================= 局部刷新执行 ================= */
-void ui_flush(void) {
-    if (g_ui.refreshing || g_ui.dirty.count == 0) return;
-    g_ui.refreshing = true;
-    
-    for (uint8_t i = 0; i < g_ui.dirty.count; i++) {
-        ui_rect_t *r = &g_ui.dirty.rects[i];
-        
-        /* 关键：清除残影策略 - 先填充背景色，再绘制新内容 */
-        /* 假设你的 OLED 驱动支持局部填充：OLED_Fill */
-        OLED_Fill(r->x, r->y, r->x + r->w - 1, r->y + r->h - 1, 0);  // 清黑
-        
-        /* 遍历所有元素，重绘与脏区域重叠的部分 */
-        for (uint8_t j = 0; j < g_ui.screen->elem_count; j++) {
-            ui_element_t *elem = (ui_element_t*)g_ui.screen->elements[j];  // const cast for render
-            if (elem && (elem->state & UI_STATE_DIRTY) && 
-                ui_rect_overlap(&elem->last_box, r)) {
-                /* 调用元素渲染函数，传入裁剪区域 */
-                if (elem->cfg->render) {
-                    elem->cfg->render(elem, g_ui.framebuffer, r);
-                }
-                elem->state &= ~UI_STATE_DIRTY;  // 清除脏标志
-            }
-        }
-        
-        /* 通过 I2C 发送局部数据到 OLED */
-        /* 假设 OLED_Set_Pos 设置窗口，OLED_Send_Data 发送原始字节 */
-        OLED_Set_Pos(r->x, r->y);
-        /* 计算显存偏移：128x64 1bpp = 1024 字节，按行排列 */
-        uint32_t offset = (r->y / 8) * 128 + r->x;  // 页模式简化计算
-        /* 注意：实际发送需考虑页对齐，这里简化示意 */
-        for (uint8_t page = r->y/8; page <= (r->y + r->h - 1)/8; page++) {
-            OLED_Set_Pos(r->x, page * 8);
-            /* 发送一页内的数据... 实际需按 SSD1306 协议处理 */
-        }
-    }
-    
+/* ================= 系统初始化 ================= */
+void ui_init(uint8_t *fb) {
+    memset(&g_ui, 0, sizeof(g_ui));
+    g_ui.framebuffer = fb;
+    g_ui.input_bound = false;
     g_ui.dirty.count = 0;
     g_ui.refreshing = false;
+    g_ui.focused_idx = 0;
+    
+    /* 初始化对象池 */
+    for (uint8_t i = 0; i < UI_POOL_SIZE; i++) {
+        g_ui.pool[i].pool_id = i;
+        g_ui.pool[i].state = UI_STATE_NORMAL;
+        g_ui.pool[i].cfg = NULL;
+        g_ui.pool[i].data_binding = NULL;
+    }
+    
+    OLED_Clear();
 }
 
-/* ================= 输入检测（非阻塞状态机） ================= */
-void ui_poll_inputs(GPIO_TypeDef *port, uint16_t pin_up, uint16_t pin_down, uint16_t pin_press) {
+void ui_set_screen(const ui_screen_t *screen) {
+    if (!screen) return;
+    
+    /* 清除旧界面 */
+    if (g_ui.screen) {
+        for (uint8_t i = 0; i < g_ui.screen->elem_count; i++) {
+            ui_element_t *elem = (ui_element_t*)g_ui.screen->elements[i];
+            if (elem) ui_mark_dirty(elem);
+        }
+        ui_flush();
+    }
+    
+    g_ui.screen = screen;
+    g_ui.focused_idx = 0;
+    
+    /* 标记新界面所有元素为脏 */
+    for (uint8_t i = 0; i < screen->elem_count; i++) {
+        ui_element_t *elem = (ui_element_t*)screen->elements[i];
+        if (elem) {
+            elem->state |= UI_STATE_DIRTY;
+            elem->last_box = (ui_rect_t){elem->cfg->x, elem->cfg->y, elem->cfg->w, elem->cfg->h};
+            ui_mark_dirty(elem);
+        }
+    }
+    ui_flush();
+}
+
+/* ================= 输入绑定 ================= */
+bool ui_input_bind_buttons(const ui_input_binding_t *binding) {
+    if (!binding) return false;
+    
+    /* 参数验证 */
+    if ((binding->up.port == NULL && binding->up.pin != 0) ||
+        (binding->down.port == NULL && binding->down.pin != 0) ||
+        (binding->press.port == NULL && binding->press.pin != 0)) {
+        return false;
+    }
+    
+    #ifdef UI_USE_RTOS
+        osKernelLock();
+    #endif
+    
+    memcpy(&g_input_binding, binding, sizeof(ui_input_binding_t));
+    g_ui.input_bound = true;
+    
+    /* 重置输入状态机 */
+    memset(&g_ui.input, 0, sizeof(ui_input_ctx_t));
+    
+    #ifdef UI_USE_RTOS
+        osKernelUnlock();
+    #endif
+    
+    return true;
+}
+
+bool ui_input_is_bound(void) {
+    return g_ui.input_bound;
+}
+
+void ui_input_unbind(void) {
+    #ifdef UI_USE_RTOS
+        osKernelLock();
+    #endif
+    
+    g_ui.input_bound = false;
+    memset(&g_input_binding, 0, sizeof(ui_input_binding_t));
+    memset(&g_ui.input, 0, sizeof(ui_input_ctx_t));
+    
+    #ifdef UI_USE_RTOS
+        osKernelUnlock();
+    #endif
+}
+
+bool ui_input_inject_event(ui_event_code_t evt) {
+    UI_INPUT_GUARD(false);
+    
+    if (evt < EVT_UP || evt > EVT_DOUBLE_CLICK) return false;
+    
+    #ifdef UI_USE_RTOS
+        osKernelLock();
+    #endif
+    
+    g_ui.input.pending_evt = evt;
+    g_ui.input.evt_ready = true;
+    
+    #ifdef UI_USE_RTOS
+        osKernelUnlock();
+    #endif
+    
+    return true;
+}
+
+/* ================= 输入检测 (三键独立状态机) ================= */
+static void ui_process_key(ui_key_state_t *key, ui_event_code_t evt_short, 
+                           ui_event_code_t evt_long, uint32_t now) {
+    ui_input_ctx_t *ctx = &g_ui.input;
+    
+    if (key->state == 0) return;  /* IDLE */
+    
+    if (key->state == 1) {  /* PRESSED - 检测长按 */
+        if (now - key->last_press_time >= g_input_cfg.long_press_threshold_ms) {
+            key->state = 2;  /* LONG_PRESSED */
+            ctx->pending_evt = evt_long;
+            ctx->evt_ready = true;
+        }
+    }
+}
+
+static void ui_release_key(ui_key_state_t *key, ui_event_code_t evt_short,
+                           ui_event_code_t evt_double, uint32_t now) {
+    ui_input_ctx_t *ctx = &g_ui.input;
+    uint32_t duration = now - key->last_press_time;
+    
+    key->last_release_time = now;
+    
+    if (key->state == 2) {
+        ctx->pending_evt = EVT_NONE;  /* 长按已触发 */
+    } else if (duration < g_input_cfg.long_press_threshold_ms) {
+        if (key->click_count == 2 && 
+            (now - key->last_release_time) < g_input_cfg.double_click_gap_ms) {
+            ctx->pending_evt = evt_double;
+            key->click_count = 0;
+        } else {
+            ctx->pending_evt = evt_short;
+        }
+        ctx->evt_ready = true;
+    }
+    
+    key->state = 0;
+}
+
+void ui_tick(void) {
+    if (!g_ui.input_bound) return;
+    
     ui_input_ctx_t *ctx = &g_ui.input;
     uint32_t now = HAL_GetTick();
     
-    /* 读取 GPIO 状态（假设低电平有效）*/
-    bool up = (HAL_GPIO_ReadPin(port, pin_up) == GPIO_PIN_RESET);
-    bool down = (HAL_GPIO_ReadPin(port, pin_down) == GPIO_PIN_RESET);
-    bool press = (HAL_GPIO_ReadPin(port, pin_press) == GPIO_PIN_RESET);
+    /* 读取三键状态 */
+    bool up    = ui_read_button(&g_input_binding.up);
+    bool down  = ui_read_button(&g_input_binding.down);
+    bool press = ui_read_button(&g_input_binding.press);
     
-    /* 简化：只处理 press 键作为示例，上/下拨同理 */
+    /* ========== 上拨键 ========== */
+    if (up) {
+        if (ctx->up.state == 0) {
+            ctx->up.last_press_time = now;
+            ctx->up.state = 1;
+            ctx->up.click_count++;
+        } else {
+            ui_process_key(&ctx->up, EVT_UP, EVT_LONG_UP, now);
+        }
+    } else {
+        if (ctx->up.state >= 1) {
+            ui_release_key(&ctx->up, EVT_UP, EVT_DOUBLE_CLICK, now);
+        }
+    }
+    
+    /* ========== 下拨键 ========== */
+    if (down) {
+        if (ctx->down.state == 0) {
+            ctx->down.last_press_time = now;
+            ctx->down.state = 1;
+            ctx->down.click_count++;
+        } else {
+            ui_process_key(&ctx->down, EVT_DOWN, EVT_LONG_DOWN, now);
+        }
+    } else {
+        if (ctx->down.state >= 1) {
+            ui_release_key(&ctx->down, EVT_DOWN, EVT_DOUBLE_CLICK, now);
+        }
+    }
+    
+    /* ========== 确认键 ========== */
     if (press) {
-        if (ctx->key_state == 0) {  // 上升沿：按下
-            ctx->last_press_time = now;
-            ctx->key_state = 1;     // PRESSED
-            ctx->click_count++;
-            /* 标记焦点元素为按下态 + 脏 */
+        if (ctx->press.state == 0) {
+            ctx->press.last_press_time = now;
+            ctx->press.state = 1;
+            ctx->press.click_count++;
+            
+            /* 视觉反馈：按下态 */
             if (g_ui.focused_idx < g_ui.screen->elem_count) {
                 ui_element_t *elem = (ui_element_t*)g_ui.screen->elements[g_ui.focused_idx];
                 if (elem && !(elem->state & UI_STATE_DISABLED)) {
@@ -113,35 +259,14 @@ void ui_poll_inputs(GPIO_TypeDef *port, uint16_t pin_up, uint16_t pin_down, uint
                     ui_mark_dirty(elem);
                 }
             }
-        } else if (ctx->key_state == 1) {  // 持续按下：检测长按
-            if (now - ctx->last_press_time >= g_input_cfg.long_press_threshold_ms) {
-                ctx->key_state = 2;  // LONG_PRESSED
-                ctx->pending_evt = EVT_LONG_PRESS;
-                ctx->evt_ready = true;
-            }
+        } else {
+            ui_process_key(&ctx->press, EVT_PRESS, EVT_LONG_PRESS, now);
         }
     } else {
-        if (ctx->key_state >= 1) {  // 下降沿：释放
-            uint32_t duration = now - ctx->last_press_time;
-            ctx->last_release_time = now;
+        if (ctx->press.state >= 1) {
+            ui_release_key(&ctx->press, EVT_PRESS, EVT_DOUBLE_CLICK, now);
             
-            if (ctx->key_state == 2) {
-                /* 长按已触发，不再触发短按 */
-                ctx->pending_evt = EVT_NONE;
-            } else if (duration < g_input_cfg.long_press_threshold_ms) {
-                /* 短按：检查双击 */
-                if (ctx->click_count == 2 && 
-                    (now - ctx->last_release_time) < g_input_cfg.double_click_gap_ms) {
-                    ctx->pending_evt = EVT_DOUBLE_CLICK;
-                    ctx->click_count = 0;
-                } else {
-                    ctx->pending_evt = EVT_PRESS;
-                }
-                ctx->evt_ready = true;
-            }
-            ctx->key_state = 0;
-            
-            /* 清除元素按下态 + 标记脏 */
+            /* 视觉反馈：释放 */
             if (g_ui.focused_idx < g_ui.screen->elem_count) {
                 ui_element_t *elem = (ui_element_t*)g_ui.screen->elements[g_ui.focused_idx];
                 if (elem) {
@@ -153,73 +278,122 @@ void ui_poll_inputs(GPIO_TypeDef *port, uint16_t pin_up, uint16_t pin_down, uint
         }
     }
     
-    /* 消抖：简单延时过滤，实际可用定时器 */
-    HAL_Delay(g_input_cfg.debounce_ms);
-}
-
-void ui_tick(void) {
-    /* 每 10ms 调用：驱动长按检测和时间相关动画 */
-    ui_poll_inputs(GPIOA, GPIO_PIN_1, GPIO_PIN_2, GPIO_PIN_3);  // 根据你的 GPIO 调整
-    
-    /* 如果有待处理事件，分发给焦点元素 */
-    if (g_ui.input.evt_ready && g_ui.input.pending_evt != EVT_NONE) {
+    /* ========== 事件分发 ========== */
+    if (ctx->evt_ready && ctx->pending_evt != EVT_NONE) {
         if (g_ui.focused_idx < g_ui.screen->elem_count) {
             ui_element_t *elem = (ui_element_t*)g_ui.screen->elements[g_ui.focused_idx];
-            if (elem && elem->cfg->on_event) {
-                if (elem->cfg->on_event(elem, g_ui.input.pending_evt)) {
-                    /* 事件被消耗：清除标志 */
-                    g_ui.input.evt_ready = false;
-                    g_ui.input.pending_evt = EVT_NONE;
+            if (elem && elem->cfg && elem->cfg->on_event) {
+                #ifdef UI_USE_RTOS
+                    osKernelLock();
+                #endif
+                
+                if (elem->cfg->on_event(elem, ctx->pending_evt)) {
+                    ctx->evt_ready = false;
+                    ctx->pending_evt = EVT_NONE;
                 }
+                
+                #ifdef UI_USE_RTOS
+                    osKernelUnlock();
+                #endif
             }
         }
     }
 }
 
-/* ================= 元素管理 ================= */
+/* ================= 刷新管理 ================= */
 void ui_mark_dirty(ui_element_t *elem) {
-    if (!elem) return;
+    if (!elem || !elem->cfg) return;
+    
     elem->state |= UI_STATE_DIRTY;
-    /* 添加区域到脏队列：包含 1 像素边框以防残影 */
+    
+    /* 添加区域到脏队列 (含 1 像素边框防残影) */
     ui_rect_t dirty = {
         .x = (elem->last_box.x > 1) ? elem->last_box.x - 1 : 0,
         .y = (elem->last_box.y > 1) ? elem->last_box.y - 1 : 0,
         .w = elem->last_box.w + 2,
         .h = elem->last_box.h + 2
     };
+    
     /* 边界裁剪 */
     if (dirty.x + dirty.w > 128) dirty.w = 128 - dirty.x;
     if (dirty.y + dirty.h > 64) dirty.h = 64 - dirty.y;
+    
     ui_dirty_add(&dirty);
 }
 
-void ui_init(uint8_t *fb) {
-    memset(&g_ui, 0, sizeof(g_ui));
-    g_ui.framebuffer = fb;
-    g_ui.input.key_state = 0;
-    OLED_Clear();  // 初始全清
+void ui_mark_rect_dirty(const ui_rect_t *rect) {
+    if (rect) ui_dirty_add(rect);
 }
 
-void ui_set_screen(const ui_screen_t *screen) {
-    if (!screen) return;
-    /* 标记旧界面所有元素为脏（用于清除）*/
-    if (g_ui.screen) {
-        for (uint8_t i = 0; i < g_ui.screen->elem_count; i++) {
-            ui_element_t *elem = (ui_element_t*)g_ui.screen->elements[i];
-            if (elem) ui_mark_dirty(elem);
+void ui_flush(void) {
+    if (g_ui.refreshing || g_ui.dirty.count == 0) return;
+    
+    g_ui.refreshing = true;
+    
+    for (uint8_t i = 0; i < g_ui.dirty.count; i++) {
+        ui_rect_t *r = &g_ui.dirty.rects[i];
+        
+        /* 清除区域 (防残影) */
+        OLED_Fill(r->x, r->y, r->x + r->w - 1, r->y + r->h - 1, 0);
+        
+        /* 重绘重叠元素 */
+        for (uint8_t j = 0; j < g_ui.screen->elem_count; j++) {
+            ui_element_t *elem = (ui_element_t*)g_ui.screen->elements[j];
+            if (elem && (elem->state & UI_STATE_DIRTY) &&
+                ui_rect_overlap(&elem->last_box, r)) {
+                if (elem->cfg && elem->cfg->render) {
+                    elem->cfg->render(elem, g_ui.framebuffer, r);
+                }
+                elem->state &= ~UI_STATE_DIRTY;
+            }
         }
-        ui_flush();  // 先清除旧内容
+        
+        /* 发送局部数据到 OLED */
+        OLED_Set_Pos(r->x, r->y);
+        /* 注意：实际发送需根据 SSD1306 页模式处理 */
     }
-    g_ui.screen = screen;
-    g_ui.focused_idx = 0;
-    /* 标记新界面所有元素为脏 */
-    for (uint8_t i = 0; i < screen->elem_count; i++) {
-        ui_element_t *elem = (ui_element_t*)screen->elements[i];
-        if (elem) {
-            elem->state |= UI_STATE_DIRTY;
-            elem->last_box = (ui_rect_t){elem->cfg->x, elem->cfg->y, elem->cfg->w, elem->cfg->h};
-            ui_mark_dirty(elem);
+    
+    g_ui.dirty.count = 0;
+    g_ui.refreshing = false;
+}
+
+/* ================= 焦点管理 ================= */
+void ui_focus_next(void) {
+    if (!g_ui.screen || g_ui.screen->elem_count == 0) return;
+    
+    uint8_t start = g_ui.focused_idx;
+    do {
+        g_ui.focused_idx = (g_ui.focused_idx + 1) % g_ui.screen->elem_count;
+        ui_element_t *elem = (ui_element_t*)g_ui.screen->elements[g_ui.focused_idx];
+        if (elem && !(elem->state & UI_STATE_DISABLED) && !(elem->state & UI_STATE_HIDDEN)) {
+            break;
         }
+    } while (g_ui.focused_idx != start);
+}
+
+void ui_focus_prev(void) {
+    if (!g_ui.screen || g_ui.screen->elem_count == 0) return;
+    
+    uint8_t start = g_ui.focused_idx;
+    do {
+        g_ui.focused_idx = (g_ui.focused_idx == 0) ? 
+                           g_ui.screen->elem_count - 1 : g_ui.focused_idx - 1;
+        ui_element_t *elem = (ui_element_t*)g_ui.screen->elements[g_ui.focused_idx];
+        if (elem && !(elem->state & UI_STATE_DISABLED) && !(elem->state & UI_STATE_HIDDEN)) {
+            break;
+        }
+    } while (g_ui.focused_idx != start);
+}
+
+void ui_focus_set(uint8_t idx) {
+    if (!g_ui.screen || idx >= g_ui.screen->elem_count) return;
+    
+    ui_element_t *elem = (ui_element_t*)g_ui.screen->elements[idx];
+    if (elem && !(elem->state & UI_STATE_DISABLED) && !(elem->state & UI_STATE_HIDDEN)) {
+        g_ui.focused_idx = idx;
     }
-    ui_flush();  // 绘制新界面
+}
+
+uint8_t ui_focus_get(void) {
+    return g_ui.focused_idx;
 }
