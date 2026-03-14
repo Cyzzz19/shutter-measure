@@ -1,97 +1,97 @@
 #include "ui_core.h"
+#include <string.h>
 #include <stdio.h>
 
-/* ================= 元素渲染函数 ================= */
-/* 文本元素渲染：支持动态绑定数据 */
-static bool render_text(ui_element_t *self, uint8_t *fb, const ui_rect_t *clip) {
-    if (!self || !self->cfg) return false;
+static uint32_t g_press_count = 0;
+
+/* ================= 渲染函数 - 修正 Y 坐标为页模式 ================= */
+static void render_text(ui_element_t *self) {
+    if (!self || !self->cfg) return;
     
-    /* 高亮态：反色显示 */
-    bool highlight = (self->state & UI_STATE_HIGHLIGHT);
+    /* 清区域：Y 坐标转换为页号 */
+    uint8_t page_start = self->cfg->y / 8;
+    uint8_t page_end = (self->cfg->y + self->cfg->h - 1) / 8;
+    if (page_end > 7) page_end = 7;
     
-    /* 获取显示文本：优先使用绑定数据，否则用配置文本 */
+    for (uint8_t p = page_start; p <= page_end; p++) {
+        OLED_Fill(self->cfg->x, p, self->cfg->x + self->cfg->w - 1, p, 0);
+    }
+    
+    /* 高亮反色（顶部）*/
+    if (self->state & UI_STATE_HIGHLIGHT) {
+        uint8_t hl_page = self->cfg->y / 8;
+        OLED_Fill(self->cfg->x, hl_page, self->cfg->x + self->cfg->w - 1, hl_page, 0xFF);
+    }
+    
+    /* 显示文本：Y 坐标必须 /8 转换为页号 */
     char buf[32] = {0};
     const char *text = self->cfg->text;
+    
     if (self->data_binding) {
-        /* 假设绑定的是 uint32_t* 类型 */
         uint32_t *val = (uint32_t*)self->data_binding;
-        snprintf(buf, sizeof(buf), "%s: %lu", text, *val);
+        snprintf(buf, sizeof(buf), "Press: %lu", *val);
         text = buf;
     }
     
-    /* 调用底层 OLED 函数绘制 */
-    /* 注意：OLED_ShowString 应只修改 framebuffer，不立即刷新 */
-    OLED_ShowString(self->cfg->x, self->cfg->y, (uint8_t*)text, 16);
-    
-    /* 更新 last_box */
-    self->last_box = (ui_rect_t){self->cfg->x, self->cfg->y, self->cfg->w, self->cfg->h};
-    return true;
+    if (text) {
+        /* 关键修复：y / 8 转换为页号 */
+        OLED_ShowString(self->cfg->x, self->cfg->y / 8, (uint8_t*)text, 16);
+    }
 }
 
-/* 按钮元素渲染：带边框和状态反馈 */
-static bool render_button(ui_element_t *self, uint8_t *fb, const ui_rect_t *clip) {
-    if (!self || !self->cfg) return false;
+static void render_button(ui_element_t *self) {
+    if (!self || !self->cfg) return;
     
-    /* 绘制边框 */
-    OLED_Fill(self->cfg->x, self->cfg->y, 
-              self->cfg->x + self->cfg->w - 1, self->cfg->y + self->cfg->h - 1, 0);
+    /* 清区域：Y 坐标转换为页号 */
+    uint8_t page_start = self->cfg->y / 8;
+    uint8_t page_end = (self->cfg->y + self->cfg->h - 1) / 8;
+    if (page_end > 7) page_end = 7;
     
-    /* 状态样式 */
-    if (self->state & UI_STATE_DISABLED) {
-        /* 禁用态：虚线边框 + 灰色文本 */
-        OLED_DrawPoint(self->cfg->x, self->cfg->y, 1);  // 简化：只画角点
-    } else if (self->state & UI_STATE_PRESSED) {
-        /* 按下态：填充背景 */
-        OLED_Fill(self->cfg->x+1, self->cfg->y+1, 
-                  self->cfg->x+self->cfg->w-2, self->cfg->y+self->cfg->h-2, 1);
-    } else if (self->state & UI_STATE_HIGHLIGHT) {
-        /* 高亮态：反色边框 */
-        OLED_Fill(self->cfg->x, self->cfg->y, 
-                  self->cfg->x+self->cfg->w-1, self->cfg->y+1, 1);  // 上边框
+    for (uint8_t p = page_start; p <= page_end; p++) {
+        OLED_Fill(self->cfg->x, p, self->cfg->x + self->cfg->w - 1, p, 0);
     }
     
-    /* 绘制文本 */
+    /* 画边框 */
+    uint8_t top_page = self->cfg->y / 8;
+    OLED_ShowString(self->cfg->x, top_page, (uint8_t*)"[", 16);
+    OLED_ShowString(self->cfg->x + self->cfg->w - 8, top_page, (uint8_t*)"]", 16);
+    
+    /* 按下态填充 */
+    if (self->state & UI_STATE_PRESSED) {
+        for (uint8_t p = page_start; p <= page_end; p++) {
+            OLED_Fill(self->cfg->x + 2, p, self->cfg->x + self->cfg->w - 3, p, 0xFF);
+        }
+    }
+    
+    /* 显示文本：Y 坐标必须 /8 */
     if (self->cfg->text) {
-        uint8_t tx = self->cfg->x + (self->cfg->w - strlen(self->cfg->text)*8)/2;
-        uint8_t ty = self->cfg->y + (self->cfg->h - 16)/2;
-        OLED_ShowString(tx, ty, (uint8_t*)self->cfg->text, 16);
+        uint8_t tx = self->cfg->x + (self->cfg->w - strlen(self->cfg->text) * 8) / 2;
+        uint8_t ty_page = self->cfg->y / 8;
+        OLED_ShowString(tx, ty_page, (uint8_t*)self->cfg->text, 16);
     }
-    
-    self->last_box = (ui_rect_t){self->cfg->x, self->cfg->y, self->cfg->w, self->cfg->h};
-    return true;
 }
 
-/* 事件处理：按钮点击反馈 */
+/* ================= 事件回调 ================= */
 static bool on_button_event(ui_element_t *self, ui_event_code_t evt) {
-    if (self->state & UI_STATE_DISABLED) return false;
+    if (!self) return false;
     
-    switch (evt) {
-        case EVT_PRESS:
-            /* 短按：切换高亮状态（测试用）*/
-            self->state ^= UI_STATE_HIGHLIGHT;
-            self->state |= UI_STATE_DIRTY;
-            ui_mark_dirty(self);
-            return true;
-        case EVT_LONG_PRESS:
-            /* 长按：禁用/启用切换 */
-            if (self->state & UI_STATE_DISABLED) {
-                self->state &= ~UI_STATE_DISABLED;
-            } else {
-                self->state |= UI_STATE_DISABLED;
-            }
-            self->state |= UI_STATE_DIRTY;
-            ui_mark_dirty(self);
-            return true;
-        default:
-            return false;
+    if (evt == EVT_PRESS) {
+        self->state ^= UI_STATE_HIGHLIGHT;
+        self->state |= UI_STATE_DIRTY;
+        g_press_count++;
+        return true;
     }
+    if (evt == EVT_LONG_PRESS) {
+        g_press_count = 0;
+        self->state |= UI_STATE_DIRTY;
+        return true;
+    }
+    return false;
 }
 
-/* ================= 配置数据（存放在 Flash） ================= */
-/* 元素配置数组 */
+/* ================= 配置 - 使用像素坐标（直观） ================= */
 static const ui_element_cfg_t cfg_title = {
     .x = 0, .y = 0, .w = 128, .h = 16,
-    .type_id = 0,
     .text = "BTN Monitor",
     .render = render_text,
     .on_event = NULL
@@ -99,113 +99,55 @@ static const ui_element_cfg_t cfg_title = {
 
 static const ui_element_cfg_t cfg_status = {
     .x = 0, .y = 16, .w = 128, .h = 16,
-    .type_id = 0,
-    .text = "Press: --",
+    .text = "Press: 0",
     .render = render_text,
     .on_event = NULL
 };
 
-static const ui_element_cfg_t cfg_btn_up = {
-    .x = 10, .y = 32, .w = 30, .h = 20,
-    .type_id = 1,
-    .text = "UP",
-    .render = render_button,
-    .on_event = on_button_event
-};
-
-static const ui_element_cfg_t cfg_btn_down = {
-    .x = 48, .y = 32, .w = 30, .h = 20,
-    .type_id = 1,
-    .text = "DN",
-    .render = render_button,
-    .on_event = on_button_event
-};
-
 static const ui_element_cfg_t cfg_btn_ok = {
-    .x = 86, .y = 32, .w = 30, .h = 20,
-    .type_id = 1,
+    .x = 48, .y = 32, .w = 32, .h = 20,
     .text = "OK",
     .render = render_button,
     .on_event = on_button_event
 };
 
-/* 状态元素（存放在 RAM 对象池）*/
-/* 注意：这些是模板，实际使用时从对象池分配并初始化 */
+/* ================= 元素状态 ================= */
 static ui_element_t elem_title = {
     .cfg = &cfg_title,
     .data_binding = NULL,
     .state = UI_STATE_NORMAL,
-    .pool_id = 0
+    .pool_id = 0,
+    .last_box = {0, 0, 128, 16}
 };
 
 static ui_element_t elem_status = {
     .cfg = &cfg_status,
-    .data_binding = NULL,  // 可绑定一个 uint32_t 变量显示计数
+    .data_binding = &g_press_count,
     .state = UI_STATE_NORMAL,
-    .pool_id = 1
-};
-
-static ui_element_t elem_btn_up = {
-    .cfg = &cfg_btn_up,
-    .data_binding = NULL,
-    .state = UI_STATE_NORMAL,
-    .pool_id = 2
-};
-
-static ui_element_t elem_btn_down = {
-    .cfg = &cfg_btn_down,
-    .data_binding = NULL,
-    .state = UI_STATE_NORMAL,
-    .pool_id = 3
+    .pool_id = 1,
+    .last_box = {0, 16, 128, 16}
 };
 
 static ui_element_t elem_btn_ok = {
     .cfg = &cfg_btn_ok,
     .data_binding = NULL,
     .state = UI_STATE_NORMAL,
-    .pool_id = 4
+    .pool_id = 2,
+    .last_box = {48, 32, 32, 20}
 };
 
-/* 屏幕定义 */
 static const ui_element_t *screen_elems[] = {
     &elem_title,
     &elem_status,
-    &elem_btn_up,
-    &elem_btn_down,
-    &elem_btn_ok,
+    &elem_btn_ok
 };
 
 const ui_screen_t test_screen = {
-    .name = "TestScreen",
-    .elem_count = 5,
+    .name = "Test",
+    .elem_count = 3,
     .elements = screen_elems
 };
 
-/* ================= 界面逻辑：实时更新按钮状态 ================= */
-/* 全局变量：记录按键次数（演示数据绑定）*/
-static uint32_t g_press_count = 0;
-
 void test_screen_update(void) {
-    /* 更新状态文本：显示按键次数 */
-    elem_status.data_binding = &g_press_count;
     elem_status.state |= UI_STATE_DIRTY;
-    ui_mark_dirty(&elem_status);
-    
-    /* 根据输入事件更新计数 */
-    if (g_ui.input.evt_ready) {
-        switch (g_ui.input.pending_evt) {
-            case EVT_PRESS:
-                g_press_count++;
-                break;
-            case EVT_LONG_PRESS:
-                g_press_count = 0;  // 长按清零
-                break;
-            case EVT_DOUBLE_CLICK:
-                g_press_count += 10;  // 双击加 10（测试用）
-                break;
-            default:
-                break;
-        }
-        g_ui.input.evt_ready = false;
-    }
 }

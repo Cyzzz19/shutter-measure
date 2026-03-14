@@ -50,27 +50,7 @@ UART_HandleTypeDef huart1;
 
 osThreadId defaultTaskHandle;
 /* USER CODE BEGIN PV */
-/* Framebuffer for UI */
-static uint8_t g_framebuffer[1024];
 
-/* Button configuration – modify according to actual hardware */
-static const ui_input_binding_t my_buttons = {
-  .up = {
-    .port = GPIOA,
-    .pin = GPIO_PIN_1,
-    .active_low = true   // assume button pulls low, internal pull‑up
-  },
-  .down = {
-    .port = GPIOA,
-    .pin = GPIO_PIN_2,
-    .active_low = true
-  },
-  .press = {
-    .port = GPIOA,
-    .pin = GPIO_PIN_3,
-    .active_low = true
-  }
-};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -83,6 +63,11 @@ void StartDefaultTask(void const * argument);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
+static const ui_input_binding_t my_buttons = {
+    .up = {GPIOA, GPIO_PIN_1, true},
+    .down = {GPIOA, GPIO_PIN_2, true},
+    .press = {GPIOA, GPIO_PIN_3, true}
+};
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
@@ -123,19 +108,22 @@ int main(void)
   // Initialize OLED display
   OLED_Init();
   OLED_Clear();
-  
-  // 1. Initialize UI system with framebuffer
-  ui_init(g_framebuffer);
+
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+  ui_init();
   
   // 2. Bind input buttons (must be before first ui_tick)
   if (!ui_input_bind_buttons(&my_buttons)) {
-      /* Binding failed – handle error, e.g., light an LED or safe mode */
-      Error_Handler();
-  }
+        Error_Handler();
+    }
   
   // 3. Set initial screen
+  
   ui_set_screen(&test_screen);
   
+  HAL_Delay(1000);
   /* USER CODE END 2 */
 
   /* USER CODE BEGIN RTOS_MUTEX */
@@ -329,21 +317,13 @@ static void MX_GPIO_Init(void)
 void StartDefaultTask(void const * argument)
 {
   /* USER CODE BEGIN 5 */
-  uint32_t last_tick = 0;
   /* Infinite loop */
-  while (1)
-  {
-    uint32_t now = HAL_GetTick();
-    /* Execute UI logic every 10 ms */
-    if (now - last_tick >= 10)
-    {
-        ui_tick();               // process input, timers, etc.
-        test_screen_update();    // update screen state
-        ui_flush();              // push framebuffer to OLED
-        last_tick = now;
+  while (1) {
+        ui_tick();
+        test_screen_update();
+        ui_flush();
+        HAL_Delay(10);
     }
-    osDelay(1);
-  }
   /* USER CODE END 5 */
 }
 

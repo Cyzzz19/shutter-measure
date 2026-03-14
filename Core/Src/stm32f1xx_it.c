@@ -51,6 +51,26 @@
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/* main.c - HardFault 调试 */
+#include <stdio.h>
+
+void HardFault_Handler_C(uint32_t *sp) {
+    printf("\n=== HARDFAULT ===\n");
+    printf("R0: 0x%08X  R1: 0x%08X  R2: 0x%08X  R3: 0x%08X\n", 
+           sp[0], sp[1], sp[2], sp[3]);
+    printf("PC: 0x%08X  LR: 0x%08X\n", sp[6], sp[5]);
+    
+    /* 检查是否为空指针或野指针 */
+    if (sp[0] < 0x20000000) printf("R0: Invalid address!\n");
+    if (sp[1] < 0x20000000) printf("R1: Invalid address!\n");
+    if (sp[2] < 0x20000000) printf("R2: Invalid address!\n");
+    
+    /* 检查栈溢出 */
+    if (sp < 0x20000400) printf("Stack overflow likely!\n");
+    
+    while (1);
+}
+
 
 /* USER CODE END 0 */
 
@@ -85,7 +105,13 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
-
+    __asm volatile (
+        "TST LR, #4 \n"
+        "ITE EQ \n"
+        "MRSEQ R0, MSP \n"
+        "MRSNE R0, PSP \n"
+        "B HardFault_Handler_C \n"
+    );
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
   {
