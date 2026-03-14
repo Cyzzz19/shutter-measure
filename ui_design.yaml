@@ -1,0 +1,59 @@
+ui_design:
+  screens:
+    - name: splash
+      description: "Startup screen displayed after power on."
+      elements:
+        - type: label
+          id: title
+          text: "Shutter Speed Detector"
+          position: center
+          fontSize: large
+          alignment: center
+      transition:
+        afterSeconds: 1
+        toScreen: main
+    - name: main
+      description: "Main measurement display."
+      elements:
+        - type: label
+          id: speed_value
+          text: "0000"
+          position: center
+          fontSize: xlarge
+          alignment: center
+          note: "Four‑digit shutter speed value."
+        - type: label
+          id: speed_unit
+          text: "s"
+          position: below_center
+          fontSize: large
+          alignment: center
+          note: "Unit displayed after the numeric value, smaller font."
+        - type: indicator
+          id: trigger_dot
+          shape: circle
+          position: top_right
+          size: small
+          color: red
+          state: off
+          behavior:
+            onTrigger: on
+            otherwise: off
+    - name: menu
+      description: "Menu screen with various functions."
+      elements:
+        - type: list
+          id: menu_items
+          items:
+            - "Basic Measurement"
+            - "Front/Rear Curtain Sync"
+            - "Rotation Test"
+            - "Gear Settings"
+            - "Stored Data"
+            - "Error Statistics Chart"
+            - "Time Compensation"
+            - "Clear Data"
+            - "About"
+          position: center
+          fontSize: medium
+          alignment: left

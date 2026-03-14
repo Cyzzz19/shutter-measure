@@ -1,0 +1,26 @@
+--cpu Cortex-M3
+"shutter\startup_stm32f103xb.o"
+"shutter\oled.o"
+"shutter\main.o"
+"shutter\stm32f1xx_it.o"
+"shutter\stm32f1xx_hal_msp.o"
+"shutter\stm32f1xx_hal_gpio_ex.o"
+"shutter\stm32f1xx_hal_i2c.o"
+"shutter\stm32f1xx_hal.o"
+"shutter\stm32f1xx_hal_rcc.o"
+"shutter\stm32f1xx_hal_rcc_ex.o"
+"shutter\stm32f1xx_hal_gpio.o"
+"shutter\stm32f1xx_hal_dma.o"
+"shutter\stm32f1xx_hal_cortex.o"
+"shutter\stm32f1xx_hal_pwr.o"
+"shutter\stm32f1xx_hal_flash.o"
+"shutter\stm32f1xx_hal_flash_ex.o"
+"shutter\stm32f1xx_hal_exti.o"
+"shutter\stm32f1xx_hal_tim.o"
+"shutter\stm32f1xx_hal_tim_ex.o"
+"shutter\stm32f1xx_hal_uart.o"
+"shutter\system_stm32f1xx.o"
+--library_type=microlib --strict --scatter "shutter\shutter.sct"
+--summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
+--info sizes --info totals --info unused --info veneers
+--list "shutter.map" -o shutter\shutter.axf

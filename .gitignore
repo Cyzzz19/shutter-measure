@@ -1,0 +1,41 @@
+# General
+# Build artifacts
+build/
+*.o
+*.obj
+*.elf
+*.bin
+*.hex
+*.map
+*.d
+*.lst
+*.sym
+*.out
+*.exe
+*.a
+*.so
+*.dll
+*.lib
+*.exp
+*.i
+*.s
+*.su
+*.swp
+*~
+# IDE files
+*.uvprojx
+*.uvoptx
+*.uvguix.*
+*.uvworkspace
+*.uvproj
+*.uvopt
+*.uvguix
+# VS Code settings
+.vscode/
+# Eclipse/STM32CubeIDE
+.cproject
+.project
+.settings/
+# Misc
+.DS_Store
+Thumbs.db
