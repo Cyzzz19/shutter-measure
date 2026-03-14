@@ -51,6 +51,8 @@ void Picture();
 extern I2C_HandleTypeDef hi2c1; // I2C1 handle defined in main
 void Write_IIC_Command(unsigned char IIC_Command);
 void Write_IIC_Data(unsigned char IIC_Data);
+void OLED_Invert_Rect(u8 x1, u8 y1, u8 x2, u8 y2);
+void OLED_Invert_String(u8 x, u8 y, u8 *p, u8 Char_Size);
 #endif  
 	 
 

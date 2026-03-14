@@ -410,7 +410,60 @@ void OLED_ShowMenu(void)
 	}
 }
 
+/* 读取 OLED GRAM 数据（需要配置 OLED 支持读操作）*/
+static uint8_t OLED_Read_Byte(void) {
+    uint8_t data = 0;
+    HAL_I2C_Mem_Read(&hi2c1, 0x78, 0x40, I2C_MEMADD_SIZE_8BIT, &data, 1, 10);
+    return data;
+}
 
+/* 关键修复：反色矩形区域 */
+void OLED_Invert_Rect(u8 x1, u8 y1, u8 x2, u8 y2) {
+    if (x1 > x2 || y1 > y2) return;
+    
+    u8 page_start = y1 / 8;
+    u8 page_end = y2 / 8;
+    if (page_end > 7) page_end = 7;
+    
+    for (u8 page = page_start; page <= page_end; page++) {
+        OLED_Set_Pos(x1, page);
+        
+        /* 发送命令：进入读 - 修改 - 写模式 */
+        OLED_WR_Byte(0xE0, OLED_CMD);  // RMW 模式开始
+        
+        for (u8 x = x1; x <= x2; x++) {
+            /* 读取当前像素数据 */
+            uint8_t old_data = 0;
+            HAL_I2C_Mem_Read(&hi2c1, 0x78, 0x40, I2C_MEMADD_SIZE_8BIT, &old_data, 1, 10);
+            
+            /* 反色 */
+            uint8_t new_data = ~old_data;
+            
+            /* 写回反色数据 */
+            OLED_WR_Byte(new_data, OLED_DATA);
+        }
+        
+        OLED_WR_Byte(0xEE, OLED_CMD);  // RMW 模式结束
+    }
+}
+
+/* 反色字符串 */
+void OLED_Invert_String(u8 x, u8 y, u8 *p, u8 Char_Size) {
+    if (!p) return;
+    
+    while (*p) {
+        if (Char_Size == 16) {
+            /* 反色 16x8 字符区域 */
+            OLED_Invert_Rect(x, y, x + 8 - 1, y + 16 - 1);
+            x += 8;
+        } else {
+            /* 反色 8x8 字符区域 */
+            OLED_Invert_Rect(x, y, x + 6 - 1, y + 8 - 1);
+            x += 6;
+        }
+        p++;
+    }
+}
 
 
 
