@@ -40,6 +40,11 @@ void ui_init(void) {
         g_ui.pool[i].state = UI_STATE_NORMAL;
     }
     
+    /* 初始化测试界面元素（关键！）*/
+    #ifdef TEST_SCREEN_INIT
+    test_screen_init_elements();
+    #endif
+    
     OLED_Init();
     OLED_Clear();
 }

@@ -117,7 +117,7 @@ typedef struct ui_element_s {
 typedef struct {
     const char *name;
     uint8_t     elem_count;
-    const ui_element_t *elements[UI_MAX_SCREEN_ELEMS];
+    const ui_element_t **elements;
 } ui_screen_t;
 
 /* ================= 全局系统 ================= */
@@ -156,6 +156,7 @@ static inline ui_element_t* ui_get_focused_element(void) {
     if (!elem || !elem->cfg) return NULL;
     return elem;
 }
+
 
 #ifdef __cplusplus
 }
