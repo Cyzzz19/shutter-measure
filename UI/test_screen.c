@@ -1,15 +1,13 @@
-/* test_screen.c - 修复版 */
+/* test_screen.c - 使用反色函数 */
 #include "ui_core.h"
 #include <string.h>
 #include <stdio.h>
 #include "cmsis_os.h"
 
-/* 按键计数器 */
 static uint32_t g_press_count_up = 0;
 static uint32_t g_press_count_down = 0;
 static uint32_t g_press_count_ok = 0;
 
-/* 全局指针 */
 static ui_element_cfg_t *cfg_title = NULL;
 static ui_element_cfg_t *cfg_count_up = NULL;
 static ui_element_cfg_t *cfg_count_down = NULL;
@@ -29,11 +27,6 @@ static ui_element_t *elem_btn_ok = NULL;
 static ui_element_t **screen_elems = NULL;
 static ui_screen_t *test_screen_ptr = NULL;
 
-/* 函数声明 */
-static void render_text(ui_element_t *self);
-static void render_button(ui_element_t *self);
-static bool on_button_event(ui_element_t *self, ui_event_code_t evt);
-
 /* 渲染函数 */
 static void render_text(ui_element_t *self) {
     if (!self || !self->cfg) return;
@@ -42,10 +35,18 @@ static void render_text(ui_element_t *self) {
     uint8_t page_end = (self->cfg->y + self->cfg->h - 1) / 8;
     if (page_end > 7) page_end = 7;
     
+    /* 清空区域 */
     for (uint8_t p = page_start; p <= page_end; p++) {
         OLED_Fill(self->cfg->x, p, self->cfg->x + self->cfg->w - 1, p, 0);
     }
     
+    /* 高亮：使用反色函数 */
+    if (self->state & UI_STATE_HIGHLIGHT) {
+        OLED_Invert_Rect(self->cfg->x, self->cfg->y, 
+                        self->cfg->x + self->cfg->w - 1, self->cfg->y + 2);
+    }
+    
+    /* 显示文本 */
     char buf[32] = {0};
     if (self->data_binding) {
         uint32_t *val = (uint32_t*)self->data_binding;
@@ -72,60 +73,49 @@ static void render_button(ui_element_t *self) {
     uint8_t tx = self->cfg->x + (self->cfg->w - strlen(btn_text) * 8) / 2;
     uint8_t ty_page = self->cfg->y / 8;
     
-    /* 根据状态绘制 */
+    /* 按下态：反色填充 */
     if (self->state & UI_STATE_PRESSED) {
-        for (uint8_t p = page_start; p <= page_end; p++) {
-            OLED_Fill(self->cfg->x + 1, p, self->cfg->x + self->cfg->w - 2, p, 0xFF);
-        }
+        OLED_Invert_Rect(self->cfg->x + 1, self->cfg->y,
+                        self->cfg->x + self->cfg->w - 2, self->cfg->y + self->cfg->h - 1);
         OLED_ShowString(tx, ty_page, (uint8_t*)btn_text, 16);
     } else if (self->state & UI_STATE_HIGHLIGHT) {
+        /* 高亮态：反色边框 */
+        OLED_Invert_Rect(self->cfg->x, ty_page,
+                        self->cfg->x + self->cfg->w - 1, ty_page + 1);
         OLED_ShowString(self->cfg->x, ty_page, (uint8_t*)"[", 16);
         OLED_ShowString(self->cfg->x + self->cfg->w - 8, ty_page, (uint8_t*)"]", 16);
-        OLED_Fill(self->cfg->x, ty_page, self->cfg->x + self->cfg->w - 1, ty_page, 0xFF);
         OLED_ShowString(tx, ty_page, (uint8_t*)btn_text, 16);
     } else {
+        /* 正常态 */
         OLED_ShowString(self->cfg->x, ty_page, (uint8_t*)"[", 16);
         OLED_ShowString(self->cfg->x + self->cfg->w - 8, ty_page, (uint8_t*)"]", 16);
         OLED_ShowString(tx, ty_page, (uint8_t*)btn_text, 16);
     }
 }
 
-/* 事件回调 - 关键修复：每个按钮只响应自己的事件 */
+/* 事件回调 */
 static bool on_button_event(ui_element_t *self, ui_event_code_t evt) {
     if (!self) return false;
     
-    /* 只响应短按和长按 */
-    if (evt != EVT_PRESS && evt != EVT_LONG_PRESS) {
-        return false;
-    }
+    if (evt != EVT_PRESS && evt != EVT_LONG_PRESS) return false;
     
-    /* 根据元素指针判断是哪个按钮 */
     if (self == elem_btn_up) {
-        if (evt == EVT_PRESS) {
-            g_press_count_up++;
-        } else if (evt == EVT_LONG_PRESS) {
-            g_press_count_up = 0;
-        }
+        if (evt == EVT_PRESS) g_press_count_up++;
+        else if (evt == EVT_LONG_PRESS) g_press_count_up = 0;
         if (elem_count_up) elem_count_up->state |= UI_STATE_DIRTY;
         return true;
     }
     
     if (self == elem_btn_down) {
-        if (evt == EVT_PRESS) {
-            g_press_count_down++;
-        } else if (evt == EVT_LONG_PRESS) {
-            g_press_count_down = 0;
-        }
+        if (evt == EVT_PRESS) g_press_count_down++;
+        else if (evt == EVT_LONG_PRESS) g_press_count_down = 0;
         if (elem_count_down) elem_count_down->state |= UI_STATE_DIRTY;
         return true;
     }
     
     if (self == elem_btn_ok) {
-        if (evt == EVT_PRESS) {
-            g_press_count_ok++;
-        } else if (evt == EVT_LONG_PRESS) {
-            g_press_count_ok = 0;
-        }
+        if (evt == EVT_PRESS) g_press_count_ok++;
+        else if (evt == EVT_LONG_PRESS) g_press_count_ok = 0;
         if (elem_count_ok) elem_count_ok->state |= UI_STATE_DIRTY;
         return true;
     }
@@ -145,9 +135,7 @@ bool test_screen_init(void) {
     cfg_btn_ok = (ui_element_cfg_t*)pvPortMalloc(sizeof(ui_element_cfg_t));
     
     if (!cfg_title || !cfg_count_up || !cfg_count_down || !cfg_count_ok ||
-        !cfg_btn_up || !cfg_btn_down || !cfg_btn_ok) {
-        return false;
-    }
+        !cfg_btn_up || !cfg_btn_down || !cfg_btn_ok) return false;
     
     /* 标题 */
     memset(cfg_title, 0, sizeof(ui_element_cfg_t));
@@ -156,42 +144,38 @@ bool test_screen_init(void) {
     cfg_title->render = render_text;
     cfg_title->on_event = NULL;
     
-    /* 计数 - UP */
+    /* 计数 */
     memset(cfg_count_up, 0, sizeof(ui_element_cfg_t));
     cfg_count_up->x = 0; cfg_count_up->y = 16; cfg_count_up->w = 40; cfg_count_up->h = 16;
     cfg_count_up->text = "UP";
     cfg_count_up->render = render_text;
     cfg_count_up->on_event = NULL;
     
-    /* 计数 - DOWN */
     memset(cfg_count_down, 0, sizeof(ui_element_cfg_t));
     cfg_count_down->x = 44; cfg_count_down->y = 16; cfg_count_down->w = 40; cfg_count_down->h = 16;
     cfg_count_down->text = "DN";
     cfg_count_down->render = render_text;
     cfg_count_down->on_event = NULL;
     
-    /* 计数 - OK */
     memset(cfg_count_ok, 0, sizeof(ui_element_cfg_t));
     cfg_count_ok->x = 88; cfg_count_ok->y = 16; cfg_count_ok->w = 40; cfg_count_ok->h = 16;
     cfg_count_ok->text = "OK";
     cfg_count_ok->render = render_text;
     cfg_count_ok->on_event = NULL;
     
-    /* 按钮 - UP */
+    /* 按钮 */
     memset(cfg_btn_up, 0, sizeof(ui_element_cfg_t));
     cfg_btn_up->x = 0; cfg_btn_up->y = 32; cfg_btn_up->w = 40; cfg_btn_up->h = 20;
     cfg_btn_up->text = "UP";
     cfg_btn_up->render = render_button;
     cfg_btn_up->on_event = on_button_event;
     
-    /* 按钮 - DOWN */
     memset(cfg_btn_down, 0, sizeof(ui_element_cfg_t));
     cfg_btn_down->x = 44; cfg_btn_down->y = 32; cfg_btn_down->w = 40; cfg_btn_down->h = 20;
     cfg_btn_down->text = "DN";
     cfg_btn_down->render = render_button;
     cfg_btn_down->on_event = on_button_event;
     
-    /* 按钮 - OK */
     memset(cfg_btn_ok, 0, sizeof(ui_element_cfg_t));
     cfg_btn_ok->x = 88; cfg_btn_ok->y = 32; cfg_btn_ok->w = 40; cfg_btn_ok->h = 20;
     cfg_btn_ok->text = "OK";
@@ -208,11 +192,8 @@ bool test_screen_init(void) {
     elem_btn_ok = (ui_element_t*)pvPortMalloc(sizeof(ui_element_t));
     
     if (!elem_title || !elem_count_up || !elem_count_down || !elem_count_ok ||
-        !elem_btn_up || !elem_btn_down || !elem_btn_ok) {
-        return false;
-    }
+        !elem_btn_up || !elem_btn_down || !elem_btn_ok) return false;
     
-    /* 初始化元素 */
     memset(elem_title, 0, sizeof(ui_element_t));
     elem_title->cfg = cfg_title;
     elem_title->last_box = (ui_rect_t){0, 0, 128, 16};
@@ -252,7 +233,6 @@ bool test_screen_init(void) {
     elem_btn_ok->last_box = (ui_rect_t){88, 32, 40, 20};
     elem_btn_ok->pool_id = 6;
     
-    /* 屏幕数组 */
     screen_elems = (ui_element_t**)pvPortMalloc(7 * sizeof(ui_element_t*));
     if (!screen_elems) return false;
     
@@ -264,15 +244,12 @@ bool test_screen_init(void) {
     screen_elems[5] = elem_btn_down;
     screen_elems[6] = elem_btn_ok;
     
-    /* 屏幕结构体 */
     test_screen_ptr = (ui_screen_t*)pvPortMalloc(sizeof(ui_screen_t));
     if (!test_screen_ptr) return false;
     
     test_screen_ptr->name = "KeyTest";
     test_screen_ptr->elem_count = 7;
     test_screen_ptr->elements = (const ui_element_t**)screen_elems;
-    
-    printf("[UI] Init OK, focused_idx will be set by ui_set_screen\n");
     
     return true;
 }
@@ -301,5 +278,5 @@ const ui_screen_t* test_screen_get(void) {
 }
 
 void test_screen_update(void) {
-    /* 不需要手动管理，事件回调已处理 */
+    /* 空函数 */
 }

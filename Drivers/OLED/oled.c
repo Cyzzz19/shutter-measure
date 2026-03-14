@@ -351,121 +351,56 @@ OLED_WR_Byte(0xAE,OLED_CMD);//--display off
 	OLED_WR_Byte(0xAF,OLED_CMD);//--turn on oled panel
 }  
 
-/*-------------------------------------------------------------------
- * UI helper functions
- *-------------------------------------------------------------------*/
 
-// Show splash screen with centered English title for 1 second
-void OLED_ShowSplash(void)
-{
-	OLED_Clear();
-	// Approximate centering: title length 22 characters, each 8px wide at size 16 => 176px, exceeds width.
-	// Use a smaller font (size 12) to fit and start near left.
-	const u8 title[] = "Shutter Speed Detector";
-	OLED_ShowString(0, 2, (u8 *)title, 12);
-	Delay_1ms(1000);
-}
 
-// Show main speed screen. "speed" is displayed as a four‑digit number.
-// "trigger" indicates whether the top‑right indicator dot should be lit.
-void OLED_ShowMainSpeed(u32 speed, uint8_t trigger)
-{
-	OLED_Clear();
-	// Display speed as four digits using large font (size 16)
-	OLED_ShowNum(0, 2, speed, 4, 16);
-	// Append unit "fps" after the number
-	const u8 unit[] = "fps";
-	OLED_ShowString(4 * 8, 2, (u8 *)unit, 16);
-
-	// Indicator dot at top‑right corner (approximate 2×2 pixels)
-	if (trigger)
-	{
-		// Fill a small rectangle near the right edge
-		OLED_Fill(120, 0, 127, 0, 1);
-	}
-	else
-	{
-		// Ensure the area is cleared when not triggered
-		OLED_Fill(120, 0, 127, 0, 0);
-	}
-}
-
-// Show menu screen with a list of options
-void OLED_ShowMenu(void)
-{
-	OLED_Clear();
-	const u8 *menu[] = {
-		(u8 *)"Basic Measurement",
-		(u8 *)"Front/Rear Curtain Sync",
-		(u8 *)"Set Gear",
-		(u8 *)"Stored Data",
-		(u8 *)"Error Statistics",
-		(u8 *)"Time Compensation",
-		(u8 *)"Clear Data",
-		(u8 *)"About"
-	};
-	for (uint8_t i = 0; i < 8; ++i)
-	{
-		OLED_ShowString(0, i * 2, (u8 *)menu[i], 12);
-	}
-}
-
-/* 读取 OLED GRAM 数据（需要配置 OLED 支持读操作）*/
-static uint8_t OLED_Read_Byte(void) {
-    uint8_t data = 0;
-    HAL_I2C_Mem_Read(&hi2c1, 0x78, 0x40, I2C_MEMADD_SIZE_8BIT, &data, 1, 10);
-    return data;
-}
-
-/* 关键修复：反色矩形区域 */
+// 反色矩形：按页写满 0xFF（点亮区域，作为反色）
 void OLED_Invert_Rect(u8 x1, u8 y1, u8 x2, u8 y2) {
+    if (x1 >= Max_Column) return;
+    if (x2 >= Max_Column) x2 = Max_Column - 1;
+    if (y1 >= 8) return;
+    if (y2 >= 8) y2 = 7;
     if (x1 > x2 || y1 > y2) return;
-    
-    u8 page_start = y1 / 8;
-    u8 page_end = y2 / 8;
-    if (page_end > 7) page_end = 7;
-    
-    for (u8 page = page_start; page <= page_end; page++) {
+
+    for (u8 page = y1; page <= y2; ++page) {
         OLED_Set_Pos(x1, page);
-        
-        /* 发送命令：进入读 - 修改 - 写模式 */
-        OLED_WR_Byte(0xE0, OLED_CMD);  // RMW 模式开始
-        
-        for (u8 x = x1; x <= x2; x++) {
-            /* 读取当前像素数据 */
-            uint8_t old_data = 0;
-            HAL_I2C_Mem_Read(&hi2c1, 0x78, 0x40, I2C_MEMADD_SIZE_8BIT, &old_data, 1, 10);
-            
-            /* 反色 */
-            uint8_t new_data = ~old_data;
-            
-            /* 写回反色数据 */
-            OLED_WR_Byte(new_data, OLED_DATA);
+        for (u8 col = x1; col <= x2; ++col) {
+            OLED_WR_Byte(0xFF, OLED_DATA);
         }
-        
-        OLED_WR_Byte(0xEE, OLED_CMD);  // RMW 模式结束
     }
 }
 
-/* 反色字符串 */
+// 反色字符（文字按字库取反后写入）
+static void OLED_ShowChar_Invert(u8 x, u8 y, u8 chr, u8 Char_Size) {
+    u8 c = chr - ' ';
+    if (Char_Size == 16) {
+        OLED_Set_Pos(x, y);
+        for (u8 i = 0; i < 8; ++i) {
+            OLED_WR_Byte(~F8X16[c * 16 + i], OLED_DATA);
+        }
+        OLED_Set_Pos(x, y + 1);
+        for (u8 i = 0; i < 8; ++i) {
+            OLED_WR_Byte(~F8X16[c * 16 + 8 + i], OLED_DATA);
+        }
+    } else {
+        OLED_Set_Pos(x, y);
+        for (u8 i = 0; i < 6; ++i) {
+            OLED_WR_Byte(~F6x8[c][i], OLED_DATA);
+        }
+    }
+}
+
 void OLED_Invert_String(u8 x, u8 y, u8 *p, u8 Char_Size) {
-    if (!p) return;
-    
-    while (*p) {
-        if (Char_Size == 16) {
-            /* 反色 16x8 字符区域 */
-            OLED_Invert_Rect(x, y, x + 8 - 1, y + 16 - 1);
-            x += 8;
-        } else {
-            /* 反色 8x8 字符区域 */
-            OLED_Invert_Rect(x, y, x + 6 - 1, y + 8 - 1);
-            x += 6;
+    u8 j = 0;
+    while (p[j] != '\0') {
+        OLED_ShowChar_Invert(x, y, p[j], Char_Size);
+        x += 8;
+        if (x > 120) {
+            x = 0;
+            y += 2;
         }
-        p++;
+        j++;
     }
 }
-
-
 
 
 

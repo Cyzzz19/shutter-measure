@@ -1,10 +1,7 @@
 /**
  * @file    ui_core.h
- * @brief   轻量级嵌入式 UI 框架 - 无 framebuffer 版本
+ * @brief   轻量级嵌入式 UI 框架核心
  * @details 专为 STM32F103C8 + 128x64 OLED 设计
- *          - 直接局部刷新到 OLED，无需 framebuffer (省 1KB RAM)
- *          - 配置数据存 Flash，状态数据存 RAM
- *          - 运行时绑定 GPIO，三键独立状态机
  */
 
 #ifndef __UI_CORE_H
@@ -26,6 +23,9 @@ extern "C" {
 #endif
 #ifndef UI_MAX_SCREEN_ELEMS
     #define UI_MAX_SCREEN_ELEMS 12
+#endif
+#ifndef UI_DIRTY_QUEUE_LEN
+    #define UI_DIRTY_QUEUE_LEN  8
 #endif
 
 /* ================= 基础类型 ================= */
@@ -113,6 +113,12 @@ typedef struct ui_element_s {
     uint8_t pool_id;
 } ui_element_t;
 
+/* ================= 脏区域队列 ================= */
+typedef struct {
+    ui_rect_t rects[UI_DIRTY_QUEUE_LEN];
+    uint8_t   count;
+} ui_dirty_queue_t;
+
 /* ================= 屏幕定义 ================= */
 typedef struct {
     const char *name;
@@ -120,16 +126,18 @@ typedef struct {
     const ui_element_t **elements;
 } ui_screen_t;
 
-/* ================= 全局系统 ================= */
+/* ================= 全局系统（只定义一次！）================= */
 typedef struct {
     const ui_screen_t *screen;
     ui_element_t pool[UI_POOL_SIZE];
     uint8_t focused_idx;
     ui_input_ctx_t input;
+    ui_dirty_queue_t dirty;
     bool input_bound;
     bool refreshing;
 } ui_system_t;
 
+/* ================= 全局实例 ================= */
 extern ui_system_t g_ui;
 
 /* ================= API ================= */
@@ -143,12 +151,15 @@ void ui_input_unbind(void);
 void ui_tick(void);
 
 void ui_mark_dirty(ui_element_t *elem);
+void ui_mark_rect_dirty(const ui_rect_t *rect);
 void ui_flush(void);
 
 void ui_focus_next(void);
 void ui_focus_prev(void);
 uint8_t ui_focus_get(void);
+void ui_focus_set(uint8_t idx);
 
+/* 内联辅助函数（只定义一次！）*/
 static inline ui_element_t* ui_get_focused_element(void) {
     if (!g_ui.screen || g_ui.screen->elem_count == 0) return NULL;
     if (g_ui.focused_idx >= g_ui.screen->elem_count) return NULL;
@@ -157,8 +168,7 @@ static inline ui_element_t* ui_get_focused_element(void) {
     return elem;
 }
 
-
 #ifdef __cplusplus
 }
 #endif
-#endif
+#endif /* __UI_CORE_H */

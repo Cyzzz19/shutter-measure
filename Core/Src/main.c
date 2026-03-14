@@ -320,6 +320,7 @@ void StartDefaultTask(void const *argument)
     ui_tick();
     test_screen_update();
     ui_flush();
+    osDelay(10);
   }
   /* USER CODE END 5 */
 }
