@@ -61,12 +61,10 @@ void HardFault_Handler_C(uint32_t *sp) {
            sp[0], sp[1], sp[2], sp[3]);
     printf("PC: 0x%08X  LR: 0x%08X\n", sp[6], sp[5]);
     
-    /* �?查是否为空指针或野指�? */
     if (sp[0] < 0x20000000) printf("R0: Invalid address!\n");
     if (sp[1] < 0x20000000) printf("R1: Invalid address!\n");
     if (sp[2] < 0x20000000) printf("R2: Invalid address!\n");
     
-    /* �?查栈溢出 */
     if (sp < 0x20000400) printf("Stack overflow likely!\n");
     
     while (1);
@@ -207,19 +205,14 @@ void TIM1_UP_IRQHandler(void)
 void TIM2_IRQHandler(void)
 {
   /* USER CODE BEGIN TIM2_IRQn 0 */
-      // 关键：先读取并清除标志位，防止重复触发
     uint32_t sr = TIM2->SR;
     
-    // 只处理 CC3 捕获中断
     if (sr & TIM_SR_CC3IF) {
         // 先清除标志位
         TIM2->SR &= ~TIM_SR_CC3IF;
-        
-        // 手动调用我们的回调
         PulseCapture_OnCapture(TIM2->CCR3);
     }
     
-    // 清除其他可能的标志位（防止累积）
     if (sr & TIM_SR_UIF) {
         TIM2->SR &= ~TIM_SR_UIF;
     }
