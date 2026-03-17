@@ -207,24 +207,7 @@ void TIM2_IRQHandler(void)
   /* USER CODE BEGIN TIM2_IRQn 0 */
     uint32_t sr = TIM2->SR;
     
-    /* ========== 处理溢出中断 ========== */
-    if (sr & TIM_SR_UIF) {
-        /* 先清除标志位 */
-        TIM2->SR &= ~TIM_SR_UIF;
-        
-        /* 软件计数溢出次数 */
-        s_overflow_count++;
-    }
-    
-    /* ========== 处理捕获中断 ========== */
-    if (sr & TIM_SR_CC3IF) {
-        /* 先清除标志位 */
-        TIM2->SR &= ~TIM_SR_CC3IF;
-        
-        /* 读取捕获值并处理 */
-        uint32_t capture = TIM2->CCR3;
-        PulseCapture_OnCapture(capture);
-    }
+
     
   /* USER CODE END TIM2_IRQn 0 */
   HAL_TIM_IRQHandler(&htim2);
@@ -233,5 +216,9 @@ void TIM2_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
+{
+        s_overflow_count++;  // 软件计数
 
+}
 /* USER CODE END 1 */
