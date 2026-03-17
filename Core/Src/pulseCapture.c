@@ -18,6 +18,8 @@ static volatile uint32_t s_write_idx = 0U;           // 写索引（中断中修
 static volatile uint32_t s_read_idx = 0U;        
 static bool s_read_lock = false;        
 static bool s_write_lock = false;        
+static bool s_lock = false;        
+
 static PulseEvent_t s_buffer[PULSE_QUEUE_SIZE];      // 缓冲区数组
 
 static EdgeState_t s_edge_state = EDGE_RISING;
@@ -88,10 +90,14 @@ void PulseCapture_OnCapture(uint32_t capture_value)
      
     s_buffer[s_write_idx & PULSE_QUEUE_MASK] = event;
 
+    if(!s_read_lock) 
+    {
+        s_read_idx = s_write_idx; // 让读取函数直接读取最新事件
+        s_lock = false;
+    }
     s_write_idx++;
     s_total_events++;
     s_overflow_cnt = 0U;
-    if(!s_read_lock) s_read_idx = s_write_idx; // 让读取函数直接读取最新事件
     s_write_lock = false;
 }
 
@@ -103,24 +109,13 @@ void PulseCapture_OnOverflow(void)
     s_overflow_cnt++;
 }
 
-/* ================= 读取事件 ================= */
-bool PulseCapture_ReadEvent(PulseEvent_t *event)
-{
-    
-    if (event == NULL) {
-        return false;
-    }
-    // 读取事件
-    *event = s_buffer[s_write_idx & PULSE_QUEUE_MASK];
-    
-}
 
 
 /* ================= 脉宽处理 ================= */
 bool PulseCapture_ProcessPulseWidth(PulseWidthResult_t *result)
 {
     s_read_lock = true;
-    if (s_write_lock || result == NULL || s_buffer[s_read_idx & PULSE_QUEUE_MASK].level == 1U) {
+    if (s_write_lock || s_lock || result == NULL || s_buffer[s_read_idx & PULSE_QUEUE_MASK].level == 1U) {
         s_read_lock = false;
         return false;
     }
@@ -129,6 +124,7 @@ bool PulseCapture_ProcessPulseWidth(PulseWidthResult_t *result)
     result->high_time_seconds = s_buffer[s_read_idx & PULSE_QUEUE_MASK].time_seconds;
     result->period_seconds = s_buffer[(s_read_idx - 1) & PULSE_QUEUE_MASK].time_seconds + result->high_time_seconds;
     s_read_lock = false;
+    s_lock = true;
     return true;
 
 }
