@@ -31,7 +31,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+extern volatile uint32_t s_overflow_count;
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -207,14 +207,23 @@ void TIM2_IRQHandler(void)
   /* USER CODE BEGIN TIM2_IRQn 0 */
     uint32_t sr = TIM2->SR;
     
-    if (sr & TIM_SR_CC3IF) {
-        // 先清除标志位
-        TIM2->SR &= ~TIM_SR_CC3IF;
-        PulseCapture_OnCapture(TIM2->CCR3);
+    /* ========== 处理溢出中断 ========== */
+    if (sr & TIM_SR_UIF) {
+        /* 先清除标志位 */
+        TIM2->SR &= ~TIM_SR_UIF;
+        
+        /* 软件计数溢出次数 */
+        s_overflow_count++;
     }
     
-    if (sr & TIM_SR_UIF) {
-        TIM2->SR &= ~TIM_SR_UIF;
+    /* ========== 处理捕获中断 ========== */
+    if (sr & TIM_SR_CC3IF) {
+        /* 先清除标志位 */
+        TIM2->SR &= ~TIM_SR_CC3IF;
+        
+        /* 读取捕获值并处理 */
+        uint32_t capture = TIM2->CCR3;
+        PulseCapture_OnCapture(capture);
     }
     
   /* USER CODE END TIM2_IRQn 0 */
