@@ -23,20 +23,14 @@ typedef struct {
     uint32_t delta_time;        /**< 距离上次事件的时间差（单位：us） */
     float    time_seconds;      /**< 浮点时间（秒） */
     uint8_t  level;             /**< 电平状态：1=上升沿，0=下降沿 */
-    uint8_t  reserved[3];       /**< 4字节对齐 */
 } PulseEvent_t;
 
 /**
  * @brief 脉宽测量结果
  */
 typedef struct {
-    uint32_t high_time_us;      /**< 高电平持续时间（us） */
-    uint32_t period_us;         /**< 完整周期（us） */
     float    high_time_seconds; /**< 高电平持续时间（秒） */
     float    period_seconds;    /**< 完整周期（秒） */
-    float    capture_time;      /**< 捕获时刻的时间（秒） */
-    uint8_t  is_valid;          /**< 数据有效标志 */
-    uint8_t  reserved[3];
 } PulseWidthResult_t;
 
 /**

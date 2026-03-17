@@ -83,7 +83,6 @@ void ui_init(void) {
     OLED_Clear();
 }
 
-/* ui_core.c - 修复 ui_set_screen() */
 void ui_set_screen(const ui_screen_t *screen) {
     if (!screen || screen->elem_count == 0) {
         return;
@@ -410,7 +409,7 @@ void ui_flush(void) {
             }
         }
         if (!has_dirty_elems) {
-            return;  /* 真的没有需要刷新的 */
+            return;  
         }
     }
     

@@ -409,17 +409,17 @@ void pulse_freq_screen_update(void)
     /* 处理脉宽事件 */
     if (PulseCapture_ProcessPulseWidth(&result))
     {
-        if (result.is_valid && result.high_time_us > 0)
+        if (result.high_time_seconds > 0)
         {
             /* 计算频率 = 1 / 周期 */
-            float period_seconds = result.period_seconds;
+            float period_seconds = result.high_time_seconds;
             if (period_seconds > 0)
             {
                 g_last_frequency = 1.0f / period_seconds; // 频率 (Hz)
             }
 
             /* 保存脉宽 */
-            g_last_pulse_width = (float)result.high_time_us; // 微秒
+            g_last_pulse_width = (float)result.high_time_seconds * 1000000; 
 
             /* 更新计数 */
             g_pulse_count++;

@@ -379,7 +379,7 @@ void StartDefaultTask(void const *argument)
   while (1)
   {
     ui_tick();
-  pulse_freq_screen_update();
+    pulse_freq_screen_update();
     ui_flush();
     osDelay(10);
   }
