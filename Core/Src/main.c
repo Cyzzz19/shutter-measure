@@ -27,7 +27,6 @@
 #include "ui_core.h"
 #include "pulseCapture.h"
 #include "test_screen.h"
-#include "pulseCapture.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -398,9 +397,7 @@ void StartDefaultTask(void const *argument)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   /* USER CODE BEGIN Callback 0 */
-   if (htim->Instance == TIM2) {
-        PulseCapture_PeriodElapsedCallback();
-    }
+
   /* USER CODE END Callback 0 */
   if (htim->Instance == TIM1)
   {

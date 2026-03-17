@@ -10,23 +10,32 @@ extern "C" {
 #include <stdbool.h>
 
 /* ================= 配置参数 ================= */
-#define PULSE_QUEUE_SIZE        64U
+#define PULSE_QUEUE_SIZE        64U         // 队列深度（必须是2的幂）
 #define PULSE_QUEUE_MASK        (PULSE_QUEUE_SIZE - 1U)
 #define TIMER_PRESCALER         71U
 
 /* ================= 数据结构 ================= */
 
+/**
+ * @brief 捕获事件：中断中生成，主循环中消费
+ */
 typedef struct {
     uint32_t delta_time;        /**< 距离上次事件的时间差（单位：us） */
     float    time_seconds;      /**< 浮点时间（秒） */
     uint8_t  level;             /**< 电平状态：1=上升沿，0=下降沿 */
 } PulseEvent_t;
 
+/**
+ * @brief 脉宽测量结果
+ */
 typedef struct {
     float    high_time_seconds; /**< 高电平持续时间（秒） */
     float    period_seconds;    /**< 完整周期（秒） */
 } PulseWidthResult_t;
 
+/**
+ * @brief 统计信息
+ */
 typedef struct {
     uint32_t total_events;      /**< 总事件数 */
     uint32_t overflow_cnt;      /**< 定时器溢出次数 */
@@ -35,8 +44,24 @@ typedef struct {
 
 /* ================= 公共接口 ================= */
 
+/**
+ * @brief 初始化脉冲捕获模块
+ * @param htim TIM2句柄（必须已配置）
+ * @param channel 捕获通道（必须为 TIM_CHANNEL_3）
+ * @retval HAL_OK 成功 / HAL_ERROR 失败
+ */
 HAL_StatusTypeDef PulseCapture_Init(TIM_HandleTypeDef *htim, uint32_t channel);
+
+/**
+ * @brief 启动捕获
+ * @retval HAL_OK 成功
+ */
 HAL_StatusTypeDef PulseCapture_Start(void);
+
+/**
+ * @brief 停止捕获
+ * @retval HAL_OK 成功
+ */
 HAL_StatusTypeDef PulseCapture_Stop(void);
 
 /**
@@ -69,6 +94,10 @@ bool PulseCapture_ProcessPulseWidth(PulseWidthResult_t *result);
  * @brief 获取待处理事件数量
  */
 uint32_t PulseCapture_GetPendingCount(void);
+
+/**
+ * @brief 清空队列
+ */
 void PulseCapture_FlushQueue(void);
 
 /**
