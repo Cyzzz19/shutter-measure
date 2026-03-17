@@ -47,24 +47,33 @@ static void ui_rect_merge(ui_rect_t *out, const ui_rect_t *a, const ui_rect_t *b
 static void ui_dirty_add(const ui_rect_t *rect) {
     if (!rect || rect->w == 0 || rect->h == 0) return;
     
-    if (g_ui.dirty.count >= UI_DIRTY_QUEUE_LEN) {
-        /* 队列满：合并为全屏刷新 */
-        g_ui.dirty.count = 0;
-        ui_rect_t full = {0, 0, 128, 64};
-        g_ui.dirty.rects[0] = full;
-        g_ui.dirty.count = 1;
-        return;
-    }
+    ui_rect_t new_rect = *rect;
     
-    /* 尝试合并重叠或相邻区域 */
-    for (uint8_t i = 0; i < g_ui.dirty.count; i++) {
-        if (ui_rect_overlap(rect, &g_ui.dirty.rects[i])) {
-            ui_rect_merge(&g_ui.dirty.rects[i], &g_ui.dirty.rects[i], rect);
-            return;
+    // 尝试与现有所有区域合并
+    for (uint8_t i = 0; i < g_ui.dirty.count; ) {
+        if (ui_rect_overlap(&new_rect, &g_ui.dirty.rects[i])) {
+            ui_rect_merge(&new_rect, &new_rect, &g_ui.dirty.rects[i]);
+            
+            // 移除已合并的区域
+            if (i < g_ui.dirty.count - 1) {
+                memmove(&g_ui.dirty.rects[i], &g_ui.dirty.rects[i+1], 
+                        (g_ui.dirty.count - i - 1) * sizeof(ui_rect_t));
+            }
+            g_ui.dirty.count--;
+            // 继续检查新合并的区域是否与其他重叠
+        } else {
+            i++;
         }
     }
     
-    g_ui.dirty.rects[g_ui.dirty.count++] = *rect;
+    // 添加合并后的新区域
+    if (g_ui.dirty.count >= UI_DIRTY_QUEUE_LEN) {
+        // 队列满：合并为全屏刷新
+        g_ui.dirty.rects[0] = (ui_rect_t){0, 0, 128, 64};
+        g_ui.dirty.count = 1;
+    } else {
+        g_ui.dirty.rects[g_ui.dirty.count++] = new_rect;
+    }
 }
 
 /* ================= 初始化 ================= */
@@ -83,7 +92,6 @@ void ui_init(void) {
     OLED_Clear();
 }
 
-/* ui_core.c - 修复 ui_set_screen() */
 void ui_set_screen(const ui_screen_t *screen) {
     if (!screen || screen->elem_count == 0) {
         return;
@@ -141,98 +149,223 @@ void ui_input_unbind(void) {
     memset(&g_ui.input, 0, sizeof(g_ui.input));
 }
 
-/* ================= 焦点管理 ================= */
+/* ================= 焦点管理（完整修复版 - 适配已有内联函数）================= */
+
+/**
+ * @brief 切换到下一个焦点元素
+ * @note 完整修复：正确处理脏区域、边界检查和状态同步
+ */
 void ui_focus_next(void) {
-    if (!g_ui.screen || g_ui.screen->elem_count == 0) return;
-    
-    uint8_t start = g_ui.focused_idx;
-    uint8_t count = 0;
-    
-    /* 清除旧焦点高亮 */
-    ui_element_t *old_focus = ui_get_focused_element();
-    if (old_focus) {
-        old_focus->state &= ~UI_STATE_HIGHLIGHT;
-        old_focus->state |= UI_STATE_DIRTY;
+    /* 参数检查 */
+    if (!g_ui.screen || g_ui.screen->elem_count == 0) {
+        return;
     }
     
+    uint8_t start_idx = g_ui.focused_idx;
+    uint8_t current_idx = g_ui.focused_idx;
+    uint8_t try_count = 0;
+    
+    /* 保存旧焦点元素引用 - 使用内联函数 */
+    ui_element_t *old_focus = ui_get_focused_element();
+    
+    /* 清除旧焦点的高亮状态（如果存在） */
+    if (old_focus) {
+        old_focus->state &= ~UI_STATE_HIGHLIGHT;
+        /* 关键修复：立即标记为脏并添加到脏队列 */
+        ui_mark_dirty(old_focus);
+    }
+    
+    /* 寻找下一个可交互元素 */
+    bool found_valid = false;
+    
     do {
-        g_ui.focused_idx = (g_ui.focused_idx + 1) % g_ui.screen->elem_count;
-        ui_element_t *e = ui_get_focused_element();
+        /* 计算下一个索引（循环） */
+        current_idx = (current_idx + 1) % g_ui.screen->elem_count;
         
-        if (e && e->cfg && e->cfg->on_event != NULL) {
-            if (!(e->state & UI_STATE_DISABLED)) {
-                e->state |= UI_STATE_HIGHLIGHT;
-                e->state |= UI_STATE_DIRTY;
-                return;
+        /* 获取候选元素 */
+        ui_element_t *candidate = (ui_element_t*)g_ui.screen->elements[current_idx];
+        
+        /* 使用与内联函数一致的检查逻辑 */
+        if (candidate && candidate->cfg) {
+            /* 检查是否可交互（有事件处理且未禁用） */
+            if (candidate->cfg->on_event != NULL && 
+                !(candidate->state & UI_STATE_DISABLED)) {
+                
+                /* 找到有效元素 */
+                g_ui.focused_idx = current_idx;
+                
+                /* 设置高亮状态 */
+                candidate->state |= UI_STATE_HIGHLIGHT;
+                /* 关键修复：标记新焦点为脏 */
+                ui_mark_dirty(candidate);
+                
+                found_valid = true;
+                break;
             }
         }
         
-        count++;
-        if (count >= g_ui.screen->elem_count) break;
-    } while (g_ui.focused_idx != start);
+        try_count++;
+        
+        /* 防止无限循环（所有元素都不可交互的情况） */
+        if (try_count >= g_ui.screen->elem_count) {
+            break;
+        }
+        
+    } while (current_idx != start_idx);
     
-    /* 恢复旧焦点 */
-    g_ui.focused_idx = start;
-    if (old_focus) {
-        old_focus->state |= UI_STATE_HIGHLIGHT;
-        old_focus->state |= UI_STATE_DIRTY;
+    /* 如果没有找到有效元素，恢复旧焦点 */
+    if (!found_valid) {
+        g_ui.focused_idx = start_idx;
+        
+        /* 恢复旧焦点的高亮状态 */
+        if (old_focus) {
+            old_focus->state |= UI_STATE_HIGHLIGHT;
+            /* 关键修复：重新标记旧焦点为脏 */
+            ui_mark_dirty(old_focus);
+        }
     }
+    
+    /* 触发一次刷新 */
+    ui_flush();
 }
 
+/**
+ * @brief 切换到上一个焦点元素
+ * @note 完整修复：正确处理脏区域、边界检查和状态同步
+ */
 void ui_focus_prev(void) {
-    if (!g_ui.screen || g_ui.screen->elem_count == 0) return;
-    
-    uint8_t start = g_ui.focused_idx;
-    uint8_t count = 0;
-    
-    /* 清除旧焦点高亮 */
-    ui_element_t *old_focus = ui_get_focused_element();
-    if (old_focus) {
-        old_focus->state &= ~UI_STATE_HIGHLIGHT;
-        old_focus->state |= UI_STATE_DIRTY;
+    /* 参数检查 */
+    if (!g_ui.screen || g_ui.screen->elem_count == 0) {
+        return;
     }
     
+    uint8_t start_idx = g_ui.focused_idx;
+    uint8_t current_idx = g_ui.focused_idx;
+    uint8_t try_count = 0;
+    
+    /* 保存旧焦点元素引用 - 使用内联函数 */
+    ui_element_t *old_focus = ui_get_focused_element();
+    
+    /* 清除旧焦点的高亮状态（如果存在） */
+    if (old_focus) {
+        old_focus->state &= ~UI_STATE_HIGHLIGHT;
+        /* 关键修复：立即标记为脏并添加到脏队列 */
+        ui_mark_dirty(old_focus);
+    }
+    
+    /* 寻找上一个可交互元素 */
+    bool found_valid = false;
+    
     do {
-        g_ui.focused_idx = (g_ui.focused_idx == 0) ? 
-                           g_ui.screen->elem_count - 1 : g_ui.focused_idx - 1;
-        ui_element_t *e = ui_get_focused_element();
+        /* 计算上一个索引（循环） */
+        if (current_idx == 0) {
+            current_idx = g_ui.screen->elem_count - 1;
+        } else {
+            current_idx--;
+        }
         
-        if (e && e->cfg && e->cfg->on_event != NULL) {
-            if (!(e->state & UI_STATE_DISABLED)) {
-                e->state |= UI_STATE_HIGHLIGHT;
-                e->state |= UI_STATE_DIRTY;
-                return;
+        /* 获取候选元素 */
+        ui_element_t *candidate = (ui_element_t*)g_ui.screen->elements[current_idx];
+        
+        /* 使用与内联函数一致的检查逻辑 */
+        if (candidate && candidate->cfg) {
+            /* 检查是否可交互（有事件处理且未禁用） */
+            if (candidate->cfg->on_event != NULL && 
+                !(candidate->state & UI_STATE_DISABLED)) {
+                
+                /* 找到有效元素 */
+                g_ui.focused_idx = current_idx;
+                
+                /* 设置高亮状态 */
+                candidate->state |= UI_STATE_HIGHLIGHT;
+                /* 关键修复：标记新焦点为脏 */
+                ui_mark_dirty(candidate);
+                
+                found_valid = true;
+                break;
             }
         }
         
-        count++;
-        if (count >= g_ui.screen->elem_count) break;
-    } while (g_ui.focused_idx != start);
+        try_count++;
+        
+        /* 防止无限循环（所有元素都不可交互的情况） */
+        if (try_count >= g_ui.screen->elem_count) {
+            break;
+        }
+        
+    } while (current_idx != start_idx);
     
-    g_ui.focused_idx = start;
-    if (old_focus) {
-        old_focus->state |= UI_STATE_HIGHLIGHT;
-        old_focus->state |= UI_STATE_DIRTY;
+    /* 如果没有找到有效元素，恢复旧焦点 */
+    if (!found_valid) {
+        g_ui.focused_idx = start_idx;
+        
+        /* 恢复旧焦点的高亮状态 */
+        if (old_focus) {
+            old_focus->state |= UI_STATE_HIGHLIGHT;
+            /* 关键修复：重新标记旧焦点为脏 */
+            ui_mark_dirty(old_focus);
+        }
     }
+    
+    /* 触发一次刷新 */
+    ui_flush();
 }
 
-uint8_t ui_focus_get(void) { return g_ui.focused_idx; }
+/**
+ * @brief 获取当前焦点索引
+ */
+uint8_t ui_focus_get(void) { 
+    return g_ui.focused_idx; 
+}
 
+/**
+ * @brief 设置指定索引为焦点
+ * @param idx 要设置为焦点的元素索引
+ * @note 完整修复：正确处理脏区域和状态同步
+ */
 void ui_focus_set(uint8_t idx) {
-    if (!g_ui.screen || idx >= g_ui.screen->elem_count) return;
+    /* 参数检查 */
+    if (!g_ui.screen || idx >= g_ui.screen->elem_count) {
+        return;
+    }
     
+    ui_element_t *target = (ui_element_t*)g_ui.screen->elements[idx];
+    
+    /* 检查目标元素有效性（与内联函数一致） */
+    if (!target || !target->cfg) {
+        return;
+    }
+    
+    /* 如果目标元素被禁用，不能设置为焦点 */
+    if (target->state & UI_STATE_DISABLED) {
+        return;
+    }
+    
+    /* 获取当前焦点元素 - 使用内联函数 */
     ui_element_t *old_focus = ui_get_focused_element();
+    
+    /* 如果已经是同一个元素，无需处理 */
+    if (old_focus == target) {
+        return;
+    }
+    
+    /* 清除旧焦点的高亮状态（如果存在） */
     if (old_focus) {
         old_focus->state &= ~UI_STATE_HIGHLIGHT;
-        old_focus->state |= UI_STATE_DIRTY;
+        /* 关键修复：标记旧焦点为脏 */
+        ui_mark_dirty(old_focus);
     }
     
-    ui_element_t *e = (ui_element_t*)g_ui.screen->elements[idx];
-    if (e && e->cfg && e->cfg->on_event != NULL) {
-        g_ui.focused_idx = idx;
-        e->state |= UI_STATE_HIGHLIGHT;
-        e->state |= UI_STATE_DIRTY;
-    }
+    /* 设置新焦点 */
+    g_ui.focused_idx = idx;
+    
+    /* 设置新焦点的高亮状态 */
+    target->state |= UI_STATE_HIGHLIGHT;
+    /* 关键修复：标记新焦点为脏 */
+    ui_mark_dirty(target);
+    
+    /* 触发一次刷新 */
+    ui_flush();
 }
 
 /* ================= 输入检测（防抖）================= */
@@ -390,57 +523,45 @@ void ui_mark_rect_dirty(const ui_rect_t *rect) {
 
 
 void ui_flush(void) {
+    if (g_ui.refreshing || !g_ui.screen) return;
     
-    if (g_ui.refreshing) {
-        return;
-    }
-    
-    if (!g_ui.screen) {
-        return;
-    }
-    
-    /* 关键修复：即使 dirty.count==0，也要检查是否有元素标记为 DIRTY */
-    bool has_dirty_elems = false;
+    // 如果没有脏区域且没有脏元素，直接返回
     if (g_ui.dirty.count == 0) {
+        bool has_dirty = false;
         for (uint8_t j = 0; j < g_ui.screen->elem_count; j++) {
             ui_element_t *elem = (ui_element_t*)g_ui.screen->elements[j];
             if (elem && (elem->state & UI_STATE_DIRTY)) {
-                has_dirty_elems = true;
+                has_dirty = true;
                 break;
             }
         }
-        if (!has_dirty_elems) {
-            return;  /* 真的没有需要刷新的 */
-        }
+        if (!has_dirty) return;
     }
     
     g_ui.refreshing = true;
     
-    /* 第一遍：标记所有被脏区域覆盖的元素 */
-    for (uint8_t i = 0; i < g_ui.dirty.count; i++) {
-        ui_rect_t *r = &g_ui.dirty.rects[i];
-        for (uint8_t j = 0; j < g_ui.screen->elem_count; j++) {
-            ui_element_t *elem = (ui_element_t*)g_ui.screen->elements[j];
-            if (!elem || !elem->cfg) continue;
-            
-            ui_rect_t elem_rect = {elem->cfg->x, elem->cfg->y, elem->cfg->w, elem->cfg->h};
-            if (ui_rect_overlap(&elem_rect, r)) {
-                elem->state |= UI_STATE_DIRTY;
+    // 如果有脏区域，用它们标记元素
+    if (g_ui.dirty.count > 0) {
+        for (uint8_t i = 0; i < g_ui.dirty.count; i++) {
+            ui_rect_t *r = &g_ui.dirty.rects[i];
+            for (uint8_t j = 0; j < g_ui.screen->elem_count; j++) {
+                ui_element_t *elem = (ui_element_t*)g_ui.screen->elements[j];
+                if (!elem || !elem->cfg) continue;
+                
+                ui_rect_t elem_rect = {elem->cfg->x, elem->cfg->y, elem->cfg->w, elem->cfg->h};
+                if (ui_rect_overlap(&elem_rect, r)) {
+                    elem->state |= UI_STATE_DIRTY;
+                }
             }
         }
     }
     
-    /* 第二遍：渲染所有脏元素 */
-    uint8_t render_count = 0;
+    // 渲染所有脏元素
     for (uint8_t j = 0; j < g_ui.screen->elem_count; j++) {
         ui_element_t *elem = (ui_element_t*)g_ui.screen->elements[j];
-        if (!elem || !elem->cfg) continue;
-        
-        if (elem->state & UI_STATE_DIRTY) {
-            if (elem->cfg->render != NULL) {
+        if (elem && elem->cfg && (elem->state & UI_STATE_DIRTY)) {
+            if (elem->cfg->render) {
                 elem->cfg->render(elem);
-                render_count++;
-            } else {
             }
             elem->state &= ~UI_STATE_DIRTY;
             elem->last_box = (ui_rect_t){elem->cfg->x, elem->cfg->y, elem->cfg->w, elem->cfg->h};

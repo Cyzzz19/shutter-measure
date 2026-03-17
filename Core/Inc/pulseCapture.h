@@ -12,33 +12,32 @@ extern "C" {
 /* ================= 配置参数 ================= */
 #define PULSE_QUEUE_SIZE        64U
 #define PULSE_QUEUE_MASK        (PULSE_QUEUE_SIZE - 1U)
-#define TIMER_PRESCALER         59U
-#define TIMER_TICK_US           1.0e-6f
-#define TIMER_16BIT_OVERFLOW_US 65536.0f  // 65.536ms
+#define TIMER_PRESCALER         71U
 
 /* ================= 数据结构 ================= */
 
 typedef struct {
-    double timestamp_sec;
-    float delta_sec;
-    uint8_t level;
-    uint8_t reserved[3];
-} PulseEventFloat_t;
+    uint32_t delta_time;        /**< 距离上次事件的时间差（单位：us） */
+    float    time_seconds;      /**< 浮点时间（秒） */
+    uint8_t  level;             /**< 电平状态：1=上升沿，0=下降沿 */
+    uint8_t  reserved[3];       /**< 4字节对齐 */
+} PulseEvent_t;
 
 typedef struct {
-    double high_time_sec;
-    double period_sec;
-    float frequency_hz;
-    float duty_cycle;
-    uint8_t is_valid;
-    uint8_t reserved[3];
-} PulseWidthResultFloat_t;
+    uint32_t high_time_us;      /**< 高电平持续时间（us） */
+    uint32_t period_us;         /**< 完整周期（us） */
+    float    high_time_seconds; /**< 高电平持续时间（秒） */
+    float    period_seconds;    /**< 完整周期（秒） */
+    float    capture_time;      /**< 捕获时刻的时间（秒） */
+    uint8_t  is_valid;          /**< 数据有效标志 */
+    uint8_t  reserved[3];
+} PulseWidthResult_t;
 
 typedef struct {
-    uint32_t total_events;
-    uint32_t error_count;
-    uint32_t overflow_count;
-} PulseStatsFloat_t;
+    uint32_t total_events;      /**< 总事件数 */
+    uint32_t overflow_cnt;      /**< 定时器溢出次数 */
+    float    time_resolution;   /**< 时间分辨率（秒/计数） */
+} PulseStats_t;
 
 /* ================= 公共接口 ================= */
 
@@ -46,17 +45,63 @@ HAL_StatusTypeDef PulseCapture_Init(TIM_HandleTypeDef *htim, uint32_t channel);
 HAL_StatusTypeDef PulseCapture_Start(void);
 HAL_StatusTypeDef PulseCapture_Stop(void);
 
-/* HAL库回调函数（在it.c或main.c中调用） */
-void PulseCapture_IC_CaptureCallback(void);
-void PulseCapture_PeriodElapsedCallback(void);
+/**
+ * @brief 中断回调：由 TIM2_IRQHandler 调用
+ * @param capture_value CCR3 寄存器值
+ */
+void PulseCapture_OnCapture(uint32_t capture_value);
 
-bool PulseCapture_ReadEventFloat(PulseEventFloat_t *event);
-bool PulseCapture_ProcessPulseWidthFloat(PulseWidthResultFloat_t *result);
-double PulseCapture_GetCurrentTimeSec(void);
-void PulseCapture_GetStatsFloat(PulseStatsFloat_t *stats);
+/**
+ * @brief 定时器溢出中断回调
+ */
+void PulseCapture_OnOverflow(void);
 
+/**
+ * @brief 从队列读取事件（非阻塞）
+ * @param event 输出事件指针
+ * @retval true 成功 / false 队列为空
+ */
+bool PulseCapture_ReadEvent(PulseEvent_t *event);
+
+/**
+ * @brief 异步处理脉宽测量
+ * @param result 输出结果
+ * @retval true 获得有效测量 / false 数据不足
+ * @note 在主循环或低优先级任务中调用
+ */
+bool PulseCapture_ProcessPulseWidth(PulseWidthResult_t *result);
+
+/**
+ * @brief 获取待处理事件数量
+ */
 uint32_t PulseCapture_GetPendingCount(void);
 void PulseCapture_FlushQueue(void);
+
+/**
+ * @brief 获取统计信息
+ */
+void PulseCapture_GetStats(PulseStats_t *stats);
+
+/**
+ * @brief 获取当前等待的边沿类型
+ * @retval 1=等待上升沿 / 0=等待下降沿
+ */
+uint8_t PulseCapture_GetExpectedEdge(void);
+
+/**
+ * @brief 获取当前总计数器值
+ */
+uint32_t PulseCapture_GetCurrentTotalCounter(void);
+
+/**
+ * @brief 获取当前时间（秒）
+ */
+float PulseCapture_GetCurrentTimeSeconds(void);
+
+/**
+ * @brief 获取时间分辨率
+ */
+float PulseCapture_GetTimeResolution(void);
 
 #ifdef __cplusplus
 }

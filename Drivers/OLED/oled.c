@@ -314,21 +314,46 @@ void OLED_DrawBMP(unsigned char x0, unsigned char y0,unsigned char x1, unsigned 
 //初始化SSD1306					    
 void OLED_Init(void)
 { 	
-
-OLED_WR_Byte(0xAE,OLED_CMD);//--display off
+	HAL_Delay(100);//OLED电源上电延时
+	OLED_WR_Byte(0xAE,OLED_CMD);//--display off
+	HAL_Delay(100);//OLED电源上电延时
 	OLED_WR_Byte(0x00,OLED_CMD);//---set low column address
+	HAL_Delay(100);//OLED电源上电延时
 	OLED_WR_Byte(0x10,OLED_CMD);//---set high column address
+	HAL_Delay(100);//OLED电源上电延时
 	OLED_WR_Byte(0x40,OLED_CMD);//--set start line address  
+	HAL_Delay(100);//OLED电源上电延时
+
 	OLED_WR_Byte(0xB0,OLED_CMD);//--set page address
+	HAL_Delay(100);//OLED电源上电延时
+
 	OLED_WR_Byte(0x81,OLED_CMD); // contract control
+	HAL_Delay(100);//OLED电源上电延时
+
 	OLED_WR_Byte(0xFF,OLED_CMD);//--128   
+	HAL_Delay(100);//OLED电源上电延时
+
 	OLED_WR_Byte(0xA1,OLED_CMD);//set segment remap 
+	HAL_Delay(100);//OLED电源上电延时
+
 	OLED_WR_Byte(0xA6,OLED_CMD);//--normal / reverse
+	HAL_Delay(100);//OLED电源上电延时
+
 	OLED_WR_Byte(0xA8,OLED_CMD);//--set multiplex ratio(1 to 64)
+	HAL_Delay(100);//OLED电源上电延时
+
 	OLED_WR_Byte(0x3F,OLED_CMD);//--1/32 duty
+	HAL_Delay(100);//OLED电源上电延时
+
 	OLED_WR_Byte(0xC8,OLED_CMD);//Com scan direction
+	HAL_Delay(100);//OLED电源上电延时
+
 	OLED_WR_Byte(0xD3,OLED_CMD);//-set display offset
-	OLED_WR_Byte(0x00,OLED_CMD);//
+	HAL_Delay(100);//OLED电源上电延时
+
+	OLED_WR_Byte(0x00,OLED_CMD);
+	HAL_Delay(100);//OLED电源上电延时
+
 	
 	OLED_WR_Byte(0xD5,OLED_CMD);//set osc division
 	OLED_WR_Byte(0x80,OLED_CMD);//
