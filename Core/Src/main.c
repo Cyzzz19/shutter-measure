@@ -381,7 +381,7 @@ void StartDefaultTask(void const *argument)
     ui_tick();
     pulse_freq_screen_update();
     ui_flush();
-    osDelay(10);
+    osDelay(50);
   }
   /* USER CODE END 5 */
 }
