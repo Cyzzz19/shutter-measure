@@ -12,7 +12,7 @@ extern "C" {
 /* ================= 配置参数 ================= */
 #define PULSE_QUEUE_SIZE        64U         // 队列深度（必须是2的幂）
 #define PULSE_QUEUE_MASK        (PULSE_QUEUE_SIZE - 1U)
-#define TIMER_PRESCALER         59U         // 60MHz / 60 = 1MHz (1us/tick)
+#define TIMER_PRESCALER         71U         // 60MHz / 60 = 1MHz (1us/tick)
 #define TIMER_MAX_TICKS         0xFFFFFFFFU // 32位计数器
 
 /* ================= 数据结构 ================= */
