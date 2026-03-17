@@ -3,12 +3,13 @@
 
 /* ================= 私有变量 ================= */
 static TIM_HandleTypeDef *s_htim = NULL;
+static uint32_t s_channel = 0U;
 static uint8_t s_initialized = 0U;
 
-// 溢出计数（由中断处理）
-volatile uint32_t s_overflow_count = 0U;
+/* 溢出计数 */
+static volatile uint32_t s_overflow_count = 0U;
 
-// 队列
+/* 队列 */
 typedef struct {
     volatile uint32_t head;
     volatile uint32_t tail;
@@ -17,14 +18,14 @@ typedef struct {
 
 static PulseQueueFloat_t s_queue = {0U};
 
-// 状态
-static uint16_t s_last_capture = 0U;  // 上次捕获值（16位）
-static uint8_t s_edge_state = 0U;     // 0=上升沿，1=下降沿
+/* 状态 */
+static uint16_t s_last_capture = 0U;
+static uint8_t s_edge_state = 0U;  // 0=上升沿，1=下降沿
 static double s_current_time_sec = 0.0;
 static double s_last_rise_time_sec = 0.0;
 static uint8_t s_has_rise = 0U;
 
-// 统计
+/* 统计 */
 static uint32_t s_total_events = 0U;
 static uint32_t s_error_count = 0U;
 
@@ -36,8 +37,8 @@ HAL_StatusTypeDef PulseCapture_Init(TIM_HandleTypeDef *htim, uint32_t channel)
     }
     
     s_htim = htim;
-    
-   
+    s_channel = channel;
+  
     s_initialized = 1U;
     return HAL_OK;
 }
@@ -53,7 +54,13 @@ HAL_StatusTypeDef PulseCapture_Start(void)
     s_overflow_count = 0U;
     s_edge_state = 0U;
     
-    s_htim->Instance->CR1 |= TIM_CR1_CEN;
+    /* 使用HAL库启动：捕获中断 + 更新中断 */
+    if (HAL_TIM_IC_Start_IT(s_htim, s_channel) != HAL_OK) {
+        return HAL_ERROR;
+    }
+    
+    /* 使能更新中断（溢出） */
+    __HAL_TIM_ENABLE_IT(s_htim, TIM_IT_UPDATE);
     
     return HAL_OK;
 }
@@ -64,39 +71,54 @@ HAL_StatusTypeDef PulseCapture_Stop(void)
         return HAL_ERROR;
     }
     
-    s_htim->Instance->CR1 &= ~TIM_CR1_CEN;
-    return HAL_OK;
+    __HAL_TIM_DISABLE_IT(s_htim, TIM_IT_UPDATE);
+    
+    return HAL_TIM_IC_Stop_IT(s_htim, s_channel);
 }
 
-/* ================= 中断回调（由 it.c 调用） ================= */
-void PulseCapture_OnCapture(uint16_t capture_value)
+/* ================= HAL库回调函数 ================= */
+
+/**
+ * @brief 捕获完成回调（在 it.c 的 HAL_TIM_IC_CaptureCallback 中调用）
+ */
+void PulseCapture_IC_CaptureCallback(void)
 {
     if (!s_initialized || s_htim == NULL) {
         return;
     }
     
+    /* 读取捕获值（16位） */
+    uint16_t capture = 0U;
+    if (s_channel == TIM_CHANNEL_1) {
+        capture = (uint16_t)(s_htim->Instance->CCR1 & 0xFFFFU);
+    } else if (s_channel == TIM_CHANNEL_2) {
+        capture = (uint16_t)(s_htim->Instance->CCR2 & 0xFFFFU);
+    } else if (s_channel == TIM_CHANNEL_3) {
+        capture = (uint16_t)(s_htim->Instance->CCR3 & 0xFFFFU);
+    } else if (s_channel == TIM_CHANNEL_4) {
+        capture = (uint16_t)(s_htim->Instance->CCR4 & 0xFFFFU);
+    }
+    
     /* ========== 处理累积的溢出 ========== */
     if (s_overflow_count > 0) {
-        // 浮点计算：溢出次数 × 0.065536秒
-        s_current_time_sec += (double)s_overflow_count * TIMER_OVERFLOW_SEC;
+        s_current_time_sec += (double)s_overflow_count * (TIMER_16BIT_OVERFLOW_US * 1.0e-6);
         s_overflow_count = 0U;
     }
     
     /* ========== 计算 Delta（浮点） ========== */
-    uint16_t current = capture_value;
+    uint16_t current = capture;
     uint16_t last = s_last_capture;
     
     float delta_sec;
     
     if (current >= last) {
-        // 正常情况：直接相减
         uint16_t delta_ticks = current - last;
-        delta_sec = (float)delta_ticks * TIMER_TICK_US;  // 浮点转换
-    } else {
-        // 回绕情况（理论上不应该，因为UIF已处理）
-        uint16_t delta_ticks = (TIMER_16BIT_MAX - last) + current;
         delta_sec = (float)delta_ticks * TIMER_TICK_US;
-        s_current_time_sec += TIMER_OVERFLOW_SEC;
+    } else {
+        /* 回绕（罕见） */
+        uint16_t delta_ticks = (0x10000U - last) + current;
+        delta_sec = (float)delta_ticks * TIMER_TICK_US;
+        s_current_time_sec += (TIMER_16BIT_OVERFLOW_US * 1.0e-6);
     }
     
     s_last_capture = current;
@@ -108,20 +130,20 @@ void PulseCapture_OnCapture(uint16_t capture_value)
     event.delta_sec = delta_sec;
     
     if (s_edge_state == 0U) {
-        // 上升沿
+        /* 上升沿 */
         event.level = 1U;
         s_last_rise_time_sec = s_current_time_sec;
         s_has_rise = 1U;
         
-        // 切换到下降沿
-        s_htim->Instance->CCER |= (0x2U << 8);
+        /* 切换到下降沿 */
+        __HAL_TIM_SET_CAPTUREPOLARITY(s_htim, s_channel, TIM_INPUTCHANNELPOLARITY_FALLING);
         s_edge_state = 1U;
     } else {
-        // 下降沿
+        /* 下降沿 */
         event.level = 0U;
         
-        // 切换到上升沿
-        s_htim->Instance->CCER &= ~(0x2U << 8);
+        /* 切换到上升沿 */
+        __HAL_TIM_SET_CAPTUREPOLARITY(s_htim, s_channel, TIM_INPUTCHANNELPOLARITY_RISING);
         s_edge_state = 0U;
     }
     
@@ -135,6 +157,15 @@ void PulseCapture_OnCapture(uint16_t capture_value)
     } else {
         s_error_count++;
     }
+}
+
+/**
+ * @brief 周期溢出回调（在 it.c 的 HAL_TIM_PeriodElapsedCallback 中调用）
+ */
+void PulseCapture_PeriodElapsedCallback(void)
+{
+    /* 计数溢出次数 */
+    s_overflow_count++;
 }
 
 /* ================= 队列操作 ================= */
@@ -165,13 +196,12 @@ bool PulseCapture_ProcessPulseWidthFloat(PulseWidthResultFloat_t *result)
     }
     
     if (event.level == 1U) {
-        // 上升沿，等待下降沿
-        return false;
+        return false;  /* 上升沿，等待下降沿 */
     }
     
-    // 下降沿：计算脉宽
+    /* 下降沿：计算脉宽 */
     if (s_has_rise) {
-        double high_time = s_last_rise_time_sec - (s_current_time_sec - (double)event.delta_sec);
+        double high_time = event.timestamp_sec - s_last_rise_time_sec;
         double period = (double)event.delta_sec;
         
         result->high_time_sec = high_time;
@@ -200,17 +230,15 @@ double PulseCapture_GetCurrentTimeSec(void)
     
     double time = s_current_time_sec;
     
-    // 加上未处理的溢出
     if (s_overflow_count > 0) {
-        time += (double)s_overflow_count * TIMER_OVERFLOW_SEC;
+        time += (double)s_overflow_count * (TIMER_16BIT_OVERFLOW_US * 1.0e-6);
     }
     
-    // 加上当前计数
     if (cnt >= last) {
         uint16_t delta = cnt - last;
         time += (double)delta * TIMER_TICK_US;
     } else {
-        uint16_t delta = (TIMER_16BIT_MAX - last) + cnt;
+        uint16_t delta = (0x10000U - last) + cnt;
         time += (double)delta * TIMER_TICK_US;
     }
     
@@ -228,7 +256,6 @@ void PulseCapture_GetStatsFloat(PulseStatsFloat_t *stats)
     stats->total_events = s_total_events;
     stats->error_count = s_error_count;
     stats->overflow_count = s_overflow_count;
-    stats->total_time_sec = s_current_time_sec;
 }
 
 uint32_t PulseCapture_GetPendingCount(void)

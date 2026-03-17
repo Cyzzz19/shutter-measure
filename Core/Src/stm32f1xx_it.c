@@ -218,7 +218,19 @@ void TIM2_IRQHandler(void)
 /* USER CODE BEGIN 1 */
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 {
-        s_overflow_count++;  // 软件计数
+    if (htim->Instance == TIM2) {
+        PulseCapture_IC_CaptureCallback();
+    }
+}
 
+
+/**
+ * @brief 覆写HAL库的错误回调
+ */
+void HAL_TIM_ErrorCallback(TIM_HandleTypeDef *htim)
+{
+    if (htim->Instance == TIM2) {
+        /* 错误处理 */
+    }
 }
 /* USER CODE END 1 */
