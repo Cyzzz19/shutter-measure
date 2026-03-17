@@ -66,13 +66,13 @@ void StartDefaultTask(void const * argument);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
 static const ui_input_binding_t my_buttons = {
     .up = {GPIOA, GPIO_PIN_1, true},
     .down = {GPIOA, GPIO_PIN_2, true},
     .press = {GPIOA, GPIO_PIN_3, true}};
-
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
 
 /* USER CODE END 0 */
 
@@ -123,6 +123,12 @@ int main(void)
     Error_Handler();
   }
   ui_set_screen(screen);
+
+  if (PulseCapture_Init(&htim2, TIM_CHANNEL_3) != HAL_OK) {
+        Error_Handler();
+    }
+    HAL_TIM_IC_Start_IT(&htim2, TIM_CHANNEL_3); // 启动 TIM2 计数器和中断
+
   /* USER CODE END 2 */
 
   /* USER CODE BEGIN RTOS_MUTEX */
@@ -157,6 +163,7 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
     /* USER CODE END WHILE */
+
     /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */
 }
