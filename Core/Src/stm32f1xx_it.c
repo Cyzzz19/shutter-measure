@@ -1,20 +1,20 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file    stm32f1xx_it.c
-  * @brief   Interrupt Service Routines.
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ ******************************************************************************
+ * @file    stm32f1xx_it.c
+ * @brief   Interrupt Service Routines.
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (c) 2026 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
 /* USER CODE END Header */
 
 /* Includes ------------------------------------------------------------------*/
@@ -55,21 +55,26 @@ extern void PulseCapture_OnCapture(uint32_t capture_value);
 /* main.c - HardFault 调试 */
 #include <stdio.h>
 
-void HardFault_Handler_C(uint32_t *sp) {
-    printf("\n=== HARDFAULT ===\n");
-    printf("R0: 0x%08X  R1: 0x%08X  R2: 0x%08X  R3: 0x%08X\n", 
-           sp[0], sp[1], sp[2], sp[3]);
-    printf("PC: 0x%08X  LR: 0x%08X\n", sp[6], sp[5]);
-    
-    if (sp[0] < 0x20000000) printf("R0: Invalid address!\n");
-    if (sp[1] < 0x20000000) printf("R1: Invalid address!\n");
-    if (sp[2] < 0x20000000) printf("R2: Invalid address!\n");
-    
-    if (sp < 0x20000400) printf("Stack overflow likely!\n");
-    
-    while (1);
-}
+void HardFault_Handler_C(uint32_t *sp)
+{
+  printf("\n=== HARDFAULT ===\n");
+  printf("R0: 0x%08X  R1: 0x%08X  R2: 0x%08X  R3: 0x%08X\n",
+         sp[0], sp[1], sp[2], sp[3]);
+  printf("PC: 0x%08X  LR: 0x%08X\n", sp[6], sp[5]);
 
+  if (sp[0] < 0x20000000)
+    printf("R0: Invalid address!\n");
+  if (sp[1] < 0x20000000)
+    printf("R1: Invalid address!\n");
+  if (sp[2] < 0x20000000)
+    printf("R2: Invalid address!\n");
+
+  if (sp < 0x20000400)
+    printf("Stack overflow likely!\n");
+
+  while (1)
+    ;
+}
 
 /* USER CODE END 0 */
 
@@ -85,8 +90,8 @@ extern TIM_HandleTypeDef htim1;
 /*           Cortex-M3 Processor Interruption and Exception Handlers          */
 /******************************************************************************/
 /**
-  * @brief This function handles Non maskable interrupt.
-  */
+ * @brief This function handles Non maskable interrupt.
+ */
 void NMI_Handler(void)
 {
   /* USER CODE BEGIN NonMaskableInt_IRQn 0 */
@@ -100,18 +105,17 @@ void NMI_Handler(void)
 }
 
 /**
-  * @brief This function handles Hard fault interrupt.
-  */
+ * @brief This function handles Hard fault interrupt.
+ */
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
-    __asm volatile (
-        "TST LR, #4 \n"
-        "ITE EQ \n"
-        "MRSEQ R0, MSP \n"
-        "MRSNE R0, PSP \n"
-        "B HardFault_Handler_C \n"
-    );
+  __asm volatile(
+      "TST LR, #4 \n"
+      "ITE EQ \n"
+      "MRSEQ R0, MSP \n"
+      "MRSNE R0, PSP \n"
+      "B HardFault_Handler_C \n");
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
   {
@@ -121,8 +125,8 @@ void HardFault_Handler(void)
 }
 
 /**
-  * @brief This function handles Memory management fault.
-  */
+ * @brief This function handles Memory management fault.
+ */
 void MemManage_Handler(void)
 {
   /* USER CODE BEGIN MemoryManagement_IRQn 0 */
@@ -136,8 +140,8 @@ void MemManage_Handler(void)
 }
 
 /**
-  * @brief This function handles Prefetch fault, memory access fault.
-  */
+ * @brief This function handles Prefetch fault, memory access fault.
+ */
 void BusFault_Handler(void)
 {
   /* USER CODE BEGIN BusFault_IRQn 0 */
@@ -151,8 +155,8 @@ void BusFault_Handler(void)
 }
 
 /**
-  * @brief This function handles Undefined instruction or illegal state.
-  */
+ * @brief This function handles Undefined instruction or illegal state.
+ */
 void UsageFault_Handler(void)
 {
   /* USER CODE BEGIN UsageFault_IRQn 0 */
@@ -166,8 +170,8 @@ void UsageFault_Handler(void)
 }
 
 /**
-  * @brief This function handles Debug monitor.
-  */
+ * @brief This function handles Debug monitor.
+ */
 void DebugMon_Handler(void)
 {
   /* USER CODE BEGIN DebugMonitor_IRQn 0 */
@@ -186,8 +190,8 @@ void DebugMon_Handler(void)
 /******************************************************************************/
 
 /**
-  * @brief This function handles TIM1 update interrupt.
-  */
+ * @brief This function handles TIM1 update interrupt.
+ */
 void TIM1_UP_IRQHandler(void)
 {
   /* USER CODE BEGIN TIM1_UP_IRQn 0 */
@@ -200,29 +204,23 @@ void TIM1_UP_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles TIM2 global interrupt.
-  */
+ * @brief This function handles TIM2 global interrupt.
+ */
 void TIM2_IRQHandler(void)
 {
   /* USER CODE BEGIN TIM2_IRQn 0 */
-    uint32_t sr = TIM2->SR;
-    
-    if (sr & TIM_SR_CC3IF) {
-        // 先清除标志位
-        TIM2->SR &= ~TIM_SR_CC3IF;
-        PulseCapture_OnCapture(TIM2->CCR3);
-    }
-    
-    if (sr & TIM_SR_UIF) {
-        TIM2->SR &= ~TIM_SR_UIF;
-    }
-    
+
   /* USER CODE END TIM2_IRQn 0 */
   HAL_TIM_IRQHandler(&htim2);
   /* USER CODE BEGIN TIM2_IRQn 1 */
+
   /* USER CODE END TIM2_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */
-
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
+{
+  __HAL_TIM_SET_COUNTER(&htim2, 0);
+  PulseCapture_OnCapture(TIM2->CCR3);
+}
 /* USER CODE END 1 */

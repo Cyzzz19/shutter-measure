@@ -1,5 +1,6 @@
 #include "pulseCapture.h"
 #include <string.h>
+#include <math.h>
 
 /* ================= 私有类型 ================= */
 typedef enum {
@@ -25,14 +26,14 @@ static uint32_t s_last_capture = 0U;
 static uint32_t s_last_rise_delta = 0U;
 static uint8_t s_has_rise = 0U;
 static uint32_t s_total_events = 0U;
-static uint32_t s_error_count = 0U;
-static uint32_t s_overflow_cnt = 0U;
+static uint32_t s_overflow_cnt = 0U;      // 定时器溢出次数
+static float s_time_resolution = 0.0f;     // 时间分辨率（秒/计数）
 
 /* ================= 私有函数 ================= */
 static inline bool is_queue_full(void);
 static inline bool is_queue_empty(void);
 static bool enqueue_event(const PulseEvent_t *event);
-static void configure_timer_hardware(void);
+static float calculate_time_from_counter(uint32_t total_counter);
 
 /* ================= 初始化 ================= */
 HAL_StatusTypeDef PulseCapture_Init(TIM_HandleTypeDef *htim, uint32_t channel)
@@ -46,101 +47,30 @@ HAL_StatusTypeDef PulseCapture_Init(TIM_HandleTypeDef *htim, uint32_t channel)
     s_htim = htim;
     s_channel = channel;
     
-    // 清零所有状态
-    memset(&s_queue, 0, sizeof(s_queue));
-    s_edge_state = EDGE_RISING;
-    s_last_capture = htim->Instance->CNT;
-    s_last_rise_delta = 0U;
-    s_has_rise = 0U;
-    s_total_events = 0U;
-    s_error_count = 0U;
-    s_overflow_cnt = 0U;
-    
-    // 配置硬件
-    configure_timer_hardware();
+    // 计算时间分辨率（假设定时器时钟为 60MHz）
+    // 定时器计数频率 = 60MHz / (prescaler + 1)
+    // 这里预设 prescaler = 71，得到 1MHz (1us/计数)
+    uint32_t timer_clock = HAL_RCC_GetPCLK1Freq() * 2;  // APB1时钟*2通常为定时器时钟
+    uint32_t prescaler = htim->Init.Prescaler + 1;
+    float count_freq = (float)timer_clock / (float)prescaler;
+    s_time_resolution = 1.0f / count_freq;  // 秒/计数
     
     s_initialized = 1U;
     return HAL_OK;
 }
 
-static void configure_timer_hardware(void)
-{
-    // 1. 停止定时器
-    s_htim->Instance->CR1 &= ~TIM_CR1_CEN;
-    
-    // 2. 预分频：60MHz / 60 = 1MHz (1us/tick)
-    s_htim->Instance->PSC = TIMER_PRESCALER;
-    
-    // 3. 32位自由运行计数器
-    s_htim->Instance->ARR = TIMER_MAX_TICKS;
-    s_htim->Instance->CNT = 0U;
-    
-    // 4. 配置 CCMR2：通道3输入捕获模式
-    // CC3S = 01 (IC3映射到TI3), IC3F = 0000 (无滤波，可后续添加)
-    s_htim->Instance->CCMR2 &= ~(0x3U << 4);
-    s_htim->Instance->CCMR2 |= (0x1U << 4);
-    
-    // 5. 配置 CCER：初始捕获上升沿，使能通道3
-    s_htim->Instance->CCER &= ~(0x3U << 8);  // 清除 CC3P 和 CC3E
-    s_htim->Instance->CCER |= (0x1U << 8);   // CC3E=1, CC3P=0(上升沿)
-    
-    // 6. 清除所有标志位
-    s_htim->Instance->SR = 0U;
-    
-    // 7. 使能捕获中断（只使能 CC3IE）
-    s_htim->Instance->DIER &= ~(TIM_DIER_UIE | TIM_DIER_CC1IE | 
-                                TIM_DIER_CC2IE | TIM_DIER_CC4IE);
-    s_htim->Instance->DIER |= TIM_DIER_CC3IE;
-    
-    // 8. NVIC 配置（RTOS 环境下关键！）
-    // 优先级数值越大，优先级越低
-    // 必须 >= configMAX_SYSCALL_INTERRUPT_PRIORITY
-    NVIC_SetPriority(TIM2_IRQn, 6U);
-    NVIC_EnableIRQ(TIM2_IRQn);
-}
-
-/* ================= 启动/停止 ================= */
-HAL_StatusTypeDef PulseCapture_Start(void)
-{
-    if (!s_initialized || s_htim == NULL) {
-        return HAL_ERROR;
-    }
-    
-    // 同步当前计数值
-    s_last_capture = s_htim->Instance->CNT;
-    s_edge_state = EDGE_RISING;
-    
-    // 启动定时器
-    s_htim->Instance->CR1 |= TIM_CR1_CEN;
-    
-    return HAL_OK;
-}
-
-HAL_StatusTypeDef PulseCapture_Stop(void)
-{
-    if (!s_initialized || s_htim == NULL) {
-        return HAL_ERROR;
-    }
-    
-    s_htim->Instance->CR1 &= ~TIM_CR1_CEN;
-    return HAL_OK;
-}
 
 /* ================= 中断回调（由 it.c 调用） ================= */
 void PulseCapture_OnCapture(uint32_t capture_value)
 {
-    // 安全检查：防止未初始化调用
-    if (!s_initialized || s_htim == NULL || s_htim->Instance == NULL) {
-        return;
-    }
-    
-    // 计算时间差（自动处理 32 位溢出）
+    // 计算相对于上次捕获的时间差（用于脉宽测量）
     uint32_t delta = capture_value - s_last_capture;
     s_last_capture = capture_value;
     
     // 创建事件
     PulseEvent_t event;
     event.delta_time = delta;
+    event.time_seconds = capture_value * s_time_resolution + s_overflow_cnt * 65536 * s_time_resolution;
     
     if (s_edge_state == EDGE_RISING) {
         // ============ 上升沿 ============
@@ -160,13 +90,39 @@ void PulseCapture_OnCapture(uint32_t capture_value)
         s_htim->Instance->CCER &= ~(0x2U << 8);  // CC3P=0
         s_edge_state = EDGE_RISING;
     }
-    
-    // 无锁入队
-    if (!enqueue_event(&event)) {
-        s_error_count++;  // 队列满，丢弃事件
+    s_total_events++;
+    s_overflow_cnt = 0U;
+}
+
+/**
+ * @brief 定时器溢出中断回调（由 HAL 或 it.c 调用）
+ */
+void PulseCapture_OnOverflow(void)
+{
+    s_overflow_cnt++;
+}
+
+
+/**
+ * @brief 获取当前总计数器值（不触发捕获）
+ */
+uint32_t PulseCapture_GetCurrentTotalCounter(void)
+{
+    if (!s_initialized || s_htim == NULL) {
+        return 0U;
     }
     
-    s_total_events++;
+    uint32_t current_cnt = s_htim->Instance->CNT;
+    return calculate_total_counter(current_cnt);
+}
+
+/**
+ * @brief 获取当前时间（秒）
+ */
+float PulseCapture_GetCurrentTimeSeconds(void)
+{
+    uint32_t total_counter = PulseCapture_GetCurrentTotalCounter();
+    return calculate_time_from_counter(total_counter);
 }
 
 /* ================= 队列操作 ================= */
@@ -245,6 +201,9 @@ bool PulseCapture_ProcessPulseWidth(PulseWidthResult_t *result)
     if (s_has_rise) {
         result->high_time_us = s_last_rise_delta;
         result->period_us = s_last_rise_delta + event.delta_time;
+        result->high_time_seconds = calculate_time_from_counter(s_last_rise_delta);
+        result->period_seconds = calculate_time_from_counter(s_last_rise_delta + event.delta_time);
+        result->capture_time = event.time_seconds;  // 捕获时刻的时间
         result->is_valid = 1U;
         s_has_rise = 0U;  // 重置标志
         return true;
@@ -262,11 +221,16 @@ void PulseCapture_GetStats(PulseStats_t *stats)
     }
     
     stats->total_events = s_total_events;
-    stats->error_count = s_error_count;
     stats->overflow_cnt = s_overflow_cnt;
+    stats->time_resolution = s_time_resolution;
 }
 
 uint8_t PulseCapture_GetExpectedEdge(void)
 {
     return (s_edge_state == EDGE_RISING) ? 1U : 0U;
+}
+
+float PulseCapture_GetTimeResolution(void)
+{
+    return s_time_resolution;
 }
