@@ -229,11 +229,7 @@ void OLED_ShowChar(u8 x, u8 y, u8 chr, u8 Char_Size)
 {
 	unsigned char c = 0, i = 0;
 	c = chr - ' '; // 得到偏移后的值
-	if (x > Max_Column - 1)
-	{
-		x = 0;
-		y = y + 2;
-	}
+	if (x > Max_Column - 1 || y > Max_Row / 8 - 1) return;
 	if (Char_Size == 16)
 	{
 		OLED_Set_Pos(x, y);

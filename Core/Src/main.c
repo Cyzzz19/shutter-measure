@@ -55,8 +55,9 @@ osThreadId defaultTaskHandle;
 /* USER CODE BEGIN PV */
 extern uint32_t s_overflow_cnt;
 extern bool pulse_freq_screen_init(void);
-extern const ui_screen_t* pulse_freq_screen_get(void);
+extern const ui_screen_t *pulse_freq_screen_get(void);
 extern void pulse_freq_screen_update(void);
+extern bool menu_screen_init(void);
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -119,9 +120,11 @@ int main(void)
   {
     Error_Handler();
   }
-
+  /* 初始化各屏幕 */
   pulse_freq_screen_init();
+  menu_screen_init();
 
+  /* 启动时进入main页面 */
   const ui_screen_t *screen = pulse_freq_screen_get();
   if (!screen)
   {

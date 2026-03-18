@@ -71,7 +71,9 @@ Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS/cmsis_os.c \
 UI/ui_core.c \
 UI/test_screen.c \
 Core/Src/pulseCapture.c \
-UI/pulse_freq_screen.c
+UI/pulse_freq_screen.c \
+UI/generic_page.c \
+UI/menu_screen.c
 # ASM sources
 ASM_SOURCES =  \
 startup_stm32f103xb.s

@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
+#include "menu_screen.h"
 #include "cmsis_os.h" // 如果需要FreeRTOS的xTaskGetTickCount
 
 /* ================= 私有变量 ================= */
@@ -11,12 +12,15 @@ static ui_element_cfg_t *cfg_freq_value = NULL;
 static ui_element_cfg_t *cfg_pulse_title = NULL;
 static ui_element_cfg_t *cfg_pulse_value = NULL;
 static ui_element_cfg_t *cfg_status = NULL;
+static ui_element_cfg_t *cfg_root_listener = NULL;
+
 
 static ui_element_t *elem_freq_title = NULL;
 static ui_element_t *elem_freq_value = NULL;
 static ui_element_t *elem_pulse_title = NULL;
 static ui_element_t *elem_pulse_value = NULL;
 static ui_element_t *elem_status = NULL;
+static ui_element_t *elem_root_listener = NULL;
 
 static ui_element_t **screen_elems = NULL;
 static ui_screen_t *pulse_freq_screen_ptr = NULL;
@@ -222,86 +226,102 @@ static void fmt_measure(char *buf, uint32_t i_part, uint32_t f_part, uint8_t f_w
     *p = '\0';
 }
 
+static bool Global_Event_Handler(ui_element_t *self, ui_event_code_t evt)
+{
+    (void)self;
+    
+    if (evt == EVT_PRESS) {
+        /* 按下键：打开菜单 */
+        const ui_screen_t *menu = menu_screen_get();  /* 需包含 menu_screen.h */
+        if (menu) {
+            ui_push_screen(menu);
+            return true;
+        }
+    }
+    return false;
+}
 
 /* ================= 初始化函数 ================= */
 bool pulse_freq_screen_init(void)
 {
-    /* 分配配置结构体 */
+    /* ================= 1. 分配配置结构体 ================= */
     cfg_freq_title = (ui_element_cfg_t *)pvPortMalloc(sizeof(ui_element_cfg_t));
     cfg_freq_value = (ui_element_cfg_t *)pvPortMalloc(sizeof(ui_element_cfg_t));
     cfg_pulse_title = (ui_element_cfg_t *)pvPortMalloc(sizeof(ui_element_cfg_t));
     cfg_pulse_value = (ui_element_cfg_t *)pvPortMalloc(sizeof(ui_element_cfg_t));
     cfg_status = (ui_element_cfg_t *)pvPortMalloc(sizeof(ui_element_cfg_t));
+    cfg_root_listener = (ui_element_cfg_t *)pvPortMalloc(sizeof(ui_element_cfg_t));
 
     if (!cfg_freq_title || !cfg_freq_value || !cfg_pulse_title ||
-        !cfg_pulse_value || !cfg_status)
+        !cfg_pulse_value || !cfg_status || !cfg_root_listener)
     {
         return false;
     }
 
+    /* ================= 2. 初始化配置 ================= */
     /* 频率标题 */
     memset(cfg_freq_title, 0, sizeof(ui_element_cfg_t));
-    cfg_freq_title->x = 0;
-    cfg_freq_title->y = 0;
-    cfg_freq_title->w = 60;
-    cfg_freq_title->h = 16;
+    cfg_freq_title->x = 0; cfg_freq_title->y = 0;
+    cfg_freq_title->w = 60; cfg_freq_title->h = 16;
     cfg_freq_title->text = "F:";
     cfg_freq_title->render = render_title;
     cfg_freq_title->on_event = NULL;
 
     /* 频率数值 */
     memset(cfg_freq_value, 0, sizeof(ui_element_cfg_t));
-    cfg_freq_value->x = 20;
-    cfg_freq_value->y = 0;
-    cfg_freq_value->w = 68;
-    cfg_freq_value->h = 16;
+    cfg_freq_value->x = 20; cfg_freq_value->y = 0;
+    cfg_freq_value->w = 68; cfg_freq_value->h = 16;
     cfg_freq_value->text = "--- Hz";
     cfg_freq_value->render = render_value;
     cfg_freq_value->on_event = NULL;
 
     /* 脉宽标题 */
     memset(cfg_pulse_title, 0, sizeof(ui_element_cfg_t));
-    cfg_pulse_title->x = 0;
-    cfg_pulse_title->y = 16;
-    cfg_pulse_title->w = 60;
-    cfg_pulse_title->h = 16;
+    cfg_pulse_title->x = 0; cfg_pulse_title->y = 16;
+    cfg_pulse_title->w = 60; cfg_pulse_title->h = 16;
     cfg_pulse_title->text = "PW:";
     cfg_pulse_title->render = render_title;
     cfg_pulse_title->on_event = NULL;
 
     /* 脉宽数值 */
     memset(cfg_pulse_value, 0, sizeof(ui_element_cfg_t));
-    cfg_pulse_value->x = 20;
-    cfg_pulse_value->y = 16;
-    cfg_pulse_value->w = 68;
-    cfg_pulse_value->h = 16;
+    cfg_pulse_value->x = 20; cfg_pulse_value->y = 16;
+    cfg_pulse_value->w = 68; cfg_pulse_value->h = 16;
     cfg_pulse_value->text = "--- us";
     cfg_pulse_value->render = render_value;
     cfg_pulse_value->on_event = NULL;
 
     /* 状态栏 */
     memset(cfg_status, 0, sizeof(ui_element_cfg_t));
-    cfg_status->x = 0;
-    cfg_status->y = 48;
-    cfg_status->w = 128;
-    cfg_status->h = 16;
+    cfg_status->x = 0; cfg_status->y = 48;
+    cfg_status->w = 128; cfg_status->h = 16;
     cfg_status->text = "Status";
     cfg_status->render = render_status;
     cfg_status->on_event = NULL;
 
-    /* 分配元素结构体 */
+    /* 根监听器（全屏捕获事件） */
+    memset(cfg_root_listener, 0, sizeof(ui_element_cfg_t));
+    cfg_root_listener->x = 0; cfg_root_listener->y = 0;
+    cfg_root_listener->w = 128; cfg_root_listener->h = 64;
+    cfg_root_listener->text = NULL;
+    cfg_root_listener->render = NULL;  /* 无需渲染 */
+    cfg_root_listener->on_event = Global_Event_Handler;
+
+    /* ================= 3. 分配元素结构体 ================= */
     elem_freq_title = (ui_element_t *)pvPortMalloc(sizeof(ui_element_t));
     elem_freq_value = (ui_element_t *)pvPortMalloc(sizeof(ui_element_t));
     elem_pulse_title = (ui_element_t *)pvPortMalloc(sizeof(ui_element_t));
     elem_pulse_value = (ui_element_t *)pvPortMalloc(sizeof(ui_element_t));
     elem_status = (ui_element_t *)pvPortMalloc(sizeof(ui_element_t));
+    elem_root_listener = (ui_element_t *)pvPortMalloc(sizeof(ui_element_t));  /* 新增 */
 
     if (!elem_freq_title || !elem_freq_value || !elem_pulse_title ||
-        !elem_pulse_value || !elem_status)
+        !elem_pulse_value || !elem_status || !elem_root_listener)
     {
         return false;
     }
 
+    /* ================= 4. 初始化元素 ================= */
     memset(elem_freq_title, 0, sizeof(ui_element_t));
     elem_freq_title->cfg = cfg_freq_title;
     elem_freq_title->last_box = (ui_rect_t){0, 0, 60, 16};
@@ -310,7 +330,7 @@ bool pulse_freq_screen_init(void)
     memset(elem_freq_value, 0, sizeof(ui_element_t));
     elem_freq_value->cfg = cfg_freq_value;
     elem_freq_value->data_binding = &g_last_frequency;
-    elem_freq_value->last_box = (ui_rect_t){60, 0, 68, 16};
+    elem_freq_value->last_box = (ui_rect_t){20, 0, 68, 16};
     elem_freq_value->pool_id = 1;
 
     memset(elem_pulse_title, 0, sizeof(ui_element_t));
@@ -321,7 +341,7 @@ bool pulse_freq_screen_init(void)
     memset(elem_pulse_value, 0, sizeof(ui_element_t));
     elem_pulse_value->cfg = cfg_pulse_value;
     elem_pulse_value->data_binding = &g_last_pulse_width;
-    elem_pulse_value->last_box = (ui_rect_t){60, 16, 68, 16};
+    elem_pulse_value->last_box = (ui_rect_t){20, 16, 68, 16};
     elem_pulse_value->pool_id = 3;
 
     memset(elem_status, 0, sizeof(ui_element_t));
@@ -330,25 +350,33 @@ bool pulse_freq_screen_init(void)
     elem_status->last_box = (ui_rect_t){0, 48, 128, 16};
     elem_status->pool_id = 4;
 
-    /* 创建元素数组 */
-    screen_elems = (ui_element_t **)pvPortMalloc(5 * sizeof(ui_element_t *));
-    if (!screen_elems)
-        return false;
+    /* 根监听器元素 */
+    memset(elem_root_listener, 0, sizeof(ui_element_t));
+    elem_root_listener->cfg = cfg_root_listener;
+    elem_root_listener->last_box = (ui_rect_t){0, 0, 128, 64};
+    elem_root_listener->pool_id = 5;
+    elem_root_listener->state = UI_STATE_HIDDEN;  /* 不参与渲染/焦点 */
+
+    /* ================= 5. 创建元素数组 ================= */
+    screen_elems = (ui_element_t **)pvPortMalloc(6 * sizeof(ui_element_t *));
+    if (!screen_elems) return false;
 
     screen_elems[0] = elem_freq_title;
     screen_elems[1] = elem_freq_value;
     screen_elems[2] = elem_pulse_title;
     screen_elems[3] = elem_pulse_value;
     screen_elems[4] = elem_status;
+    screen_elems[5] = elem_root_listener;  /* 根监听器放末尾 */
 
-    /* 创建屏幕结构体 */
+    /* ================= 6. 创建屏幕结构体 ================= */
     pulse_freq_screen_ptr = (ui_screen_t *)pvPortMalloc(sizeof(ui_screen_t));
-    if (!pulse_freq_screen_ptr)
-        return false;
+    if (!pulse_freq_screen_ptr) return false;
 
     pulse_freq_screen_ptr->name = "PulseFreq";
-    pulse_freq_screen_ptr->elem_count = 5;
+    pulse_freq_screen_ptr->elem_count = 6;  /* 6个元素 */
     pulse_freq_screen_ptr->elements = (const ui_element_t **)screen_elems;
+    pulse_freq_screen_ptr->on_enter = NULL;
+    pulse_freq_screen_ptr->on_exit = NULL;
 
     return true;
 }
