@@ -28,31 +28,18 @@ static uint32_t g_pulse_count = 0;      // 脉冲计数
 static uint32_t g_last_update_time = 0; // 最后更新时间
 static uint8_t g_signal_present = 0;    // 信号存在标志
 
-/* 渲染函数 - 显示标题 */
-static void render_title(ui_element_t *self)
+/* ================= 辅助函数：固定宽度格式化 ================= */
+/* 功能：将字符串右对齐填充到固定宽度，空白补空格 */
+static void fmt_fixed(char *out, const char *src, uint8_t width)
 {
-    if (!self || !self->cfg)
-        return;
-
-    uint8_t page_start = self->cfg->y / 8;
-    uint8_t page_end = (self->cfg->y + self->cfg->h - 1) / 8;
-    if (page_end > 7)
-        page_end = 7;
-
-    /* 清空区域 */
-    for (uint8_t p = page_start; p <= page_end; p++)
-    {
-        OLED_Fill(self->cfg->x, p, self->cfg->x + self->cfg->w - 1, p, 0);
-    }
-
-    /* 显示标题文本（可能带边框） */
-    if (self->state & UI_STATE_HIGHLIGHT)
-    {
-        OLED_Invert_Rect(self->cfg->x, self->cfg->y,
-                         self->cfg->x + self->cfg->w - 1, self->cfg->y + self->cfg->h - 1);
-    }
-
-    OLED_ShowString(self->cfg->x, self->cfg->y / 8, (uint8_t *)self->cfg->text, 16);
+    uint8_t len = src ? strlen(src) : 0;
+    uint8_t pad = (len >= width) ? 0 : width - len;
+    
+    /* 先填空格 */
+    for (uint8_t i = 0; i < pad; i++) *out++ = ' ';
+    /* 再填内容 */
+    if (src) { while (*src) *out++ = *src++; }
+    *out = '\0';
 }
 
 static uint8_t *u32_to_str(uint8_t *dst, uint32_t val, uint8_t min_width)
@@ -68,8 +55,155 @@ static uint8_t *u32_to_str(uint8_t *dst, uint32_t val, uint8_t min_width)
     return dst;
 }
 
-static void fmt_measure(char *buf, uint32_t i_part, uint32_t f_part, 
-                        uint8_t f_width, const char *unit)
+/* 功能：格式化数值 (整数.小数 单位)，输出固定宽度 */
+static void fmt_measure_fixed(char *buf, uint32_t i_part, uint32_t f_part, uint8_t f_digits, const char *unit, uint8_t total_width)
+{
+    char tmp[16], *p = tmp;
+    
+    /* 1. 构建原始字符串: "123.456 kHz" */
+    p = u32_to_str((uint8_t*)p, i_part, 1);
+    if (f_digits > 0) {
+        *p++ = '.';
+        p = (char*)u32_to_str((uint8_t*)p, f_part, f_digits);
+    }
+    if (unit) { *p++ = ' '; while (*unit) *p++ = *unit++; }
+    *p = '\0';
+    
+    /* 2. 右对齐填充到 total_width */
+    fmt_fixed(buf, tmp, total_width);
+}
+
+/* ================= 优化后的渲染函数 ================= */
+
+/* 标题渲染：高亮时左侧显示三角图标 */
+static void render_title(ui_element_t *self)
+{
+    if (!self || !self->cfg) return;
+
+    /* 1. 清空区域 */
+    uint8_t page_s = self->cfg->y / 8, page_e = (self->cfg->y + self->cfg->h - 1) / 8;
+    if (page_e > 7) page_e = 7;
+    for (uint8_t p = page_s; p <= page_e; p++)
+        OLED_Fill(self->cfg->x, p, self->cfg->x + self->cfg->w - 1, p, 0);
+
+    /* 2. 高亮：绘制三角图标  */
+    uint8_t text_x = self->cfg->x;
+    if (self->state & UI_STATE_HIGHLIGHT) {
+        OLED_ShowIcon(text_x, self->cfg->y / 8, 0x00); /* 三角 */
+        text_x += 16; /* 图标宽8px */
+    }
+
+    /* 3. 绘制文本 */
+    if (self->cfg->text)
+        OLED_ShowString(text_x, self->cfg->y / 8, (uint8_t*)self->cfg->text, 16);
+}
+
+/* 数值渲染：固定宽度防漂移 */
+static void render_value(ui_element_t *self)
+{
+    if (!self || !self->cfg || !self->data_binding) return;
+
+    char buf[24] = {0}; /* 缓冲区足够容纳格式化结果 */
+    uint8_t page_s = self->cfg->y / 8, page_e = (self->cfg->y + self->cfg->h - 1) / 8;
+    if (page_e > 7) page_e = 7;
+
+    /* 清空区域 */
+    for (uint8_t p = page_s; p <= page_e; p++)
+        OLED_Fill(self->cfg->x, p, self->cfg->x + self->cfg->w - 1, p, 0);
+
+    /* ───────── 频率显示 ───────── */
+    if (self == elem_freq_value) {
+        float *f = (float *)self->data_binding;
+        
+        /* 无效值处理 */
+        if (!isfinite(*f) || *f <= 0.0f || !g_signal_present) {
+            fmt_fixed(buf, "--- Hz", 9); /* 固定9字符宽 */
+            OLED_ShowString(self->cfg->x, self->cfg->y/8, (uint8_t*)buf, 16);
+            return;
+        }
+
+        /* 自动单位转换 + 固定宽度格式化 */
+        if (*f >= 1000.0f) {
+            /* kHz: XXX.XXX (总宽9) */
+            uint32_t v = (uint32_t)(*f * 1000.0f + 0.5f);
+            fmt_measure_fixed(buf, v/1000, v%1000, 3, "kHz", 9);
+        }
+        else if (*f >= 1.0f) {
+            /* Hz: XXX.XX (总宽8) */
+            uint32_t v = (uint32_t)(*f * 100.0f + 0.5f);
+            fmt_measure_fixed(buf, v/100, v%100, 2, "Hz", 8);
+        }
+        else {
+            fmt_fixed(buf, "<0.001Hz", 9);
+        }
+    }
+    /* ───────── 脉宽显示 ───────── */
+    else if (self == elem_pulse_value) {
+        float *p = (float *)self->data_binding;
+        
+        if (!isfinite(*p) || *p <= 0.0f || !g_signal_present) {
+            fmt_fixed(buf, "--- us", 8);
+            OLED_ShowString(self->cfg->x, self->cfg->y/8, (uint8_t*)buf, 16);
+            return;
+        }
+
+        uint32_t us = (uint32_t)(*p + 0.5f);
+        if (us >= 1000000) {
+            /* 秒: X.XXX s (总宽7) */
+            fmt_measure_fixed(buf, us/1000000, (us%1000000)/1000, 3, "s", 7);
+        }
+        else if (us >= 1000) {
+            /* 毫秒: XXX.X ms (总宽8) */
+            uint32_t ms = us/1000, rem = us%1000;
+            fmt_measure_fixed(buf, ms, (rem+5)/10, 2, "ms", 8); /* 四舍五入 */
+        }
+        else {
+            /* 微秒: XXXX us (总宽7) */
+            fmt_measure_fixed(buf, us, 0, 0, "us", 7);
+        }
+    }
+    
+    /* 绘制：高亮时左侧预留三角位置 */
+    uint8_t draw_x = self->cfg->x;
+    if (self->state & UI_STATE_HIGHLIGHT) draw_x += 8;
+    OLED_ShowString(draw_x, self->cfg->y/8, (uint8_t*)buf, 16);
+}
+
+/* 状态渲染：固定格式 */
+static void render_status(ui_element_t *self)
+{
+    if (!self || !self->cfg) return;
+
+    char buf[20] = {0};
+    uint8_t page_s = self->cfg->y / 8, page_e = (self->cfg->y + self->cfg->h - 1) / 8;
+    if (page_e > 7) page_e = 7;
+
+    for (uint8_t p = page_s; p <= page_e; p++)
+        OLED_Fill(self->cfg->x, p, self->cfg->x + self->cfg->w - 1, p, 0);
+
+    /* 高亮三角 */
+    uint8_t text_x = self->cfg->x;
+    if (self->state & UI_STATE_HIGHLIGHT) {
+        OLED_ShowChar(text_x, self->cfg->y/8, 0x10, 16);
+        text_x += 8;
+    }
+
+    /* 状态文本 (固定格式) */
+    if (!g_signal_present) {
+        fmt_fixed(buf, "No Signal", 15);
+    }
+    else if (self->data_binding) {
+        uint32_t *cnt = (uint32_t*)self->data_binding;
+        snprintf(buf, sizeof(buf), "Pulse:%-6lu OK", *cnt); /* 左对齐计数 */
+    }
+    else {
+        fmt_fixed(buf, "Unknown", 15);
+    }
+    
+    OLED_ShowString(text_x, self->cfg->y/8, (uint8_t*)buf, 16);
+}
+
+static void fmt_measure(char *buf, uint32_t i_part, uint32_t f_part, uint8_t f_width, const char *unit)
 {
     uint8_t *p = (uint8_t *)buf;
     
@@ -88,115 +222,6 @@ static void fmt_measure(char *buf, uint32_t i_part, uint32_t f_part,
     *p = '\0';
 }
 
-/* 渲染函数 - 显示数值 */
-static void render_value(ui_element_t *self)
-{
-    if (!self || !self->cfg || !self->data_binding || !pulse_freq_screen_ptr) 
-        return;
-
-    char buf[20]; 
-    uint8_t page_start = self->cfg->y / 8;
-    uint8_t page_end = (self->cfg->y + self->cfg->h - 1) / 8;
-    if (page_end > 7) page_end = 7;
-
-    for (uint8_t p = page_start; p <= page_end; p++)
-        OLED_Fill(self->cfg->x, p, self->cfg->x + self->cfg->w - 1, p, 0);
-
-    /* ───────── 频率显示 ───────── */
-    if (self == elem_freq_value) 
-    {
-        float *f = (float *)self->data_binding;
-        /* ✅ 防御：对齐 + 有效性 */
-        if ((uint32_t)f % 4 != 0 || !isfinite(*f) || *f <= 0.0f || !g_signal_present) {
-            OLED_ShowString(self->cfg->x, self->cfg->y/8, (uint8_t*)"--- Hz", 16);
-            return;
-        }
-
-        if (*f >= 1000.0f) {
-            uint32_t v = (uint32_t)(*f / 1000.0f * 1000.0f);
-            fmt_measure(buf, v/1000, v%1000, 3, "kHz");
-        }
-        else if (*f >= 1.0f) {
-            uint32_t v = (uint32_t)(*f * 100.0f);
-            fmt_measure(buf, v/100, v%100, 2, "Hz");
-        }
-        else if (*f > 0.001f) {
-            uint32_t v = (uint32_t)(*f * 1000000.0f);
-            fmt_measure(buf, v/1000, v%1000, 3, "mHz");
-        }
-        else {
-            OLED_ShowString(self->cfg->x, self->cfg->y/8, (uint8_t*)"<0.001 mHz", 16);
-            return;
-        }
-    }
-    /* ───────── 脉宽显示 ───────── */
-    else if (self == elem_pulse_value) 
-    {
-        float *p = (float *)self->data_binding;
-        if ((uint32_t)p % 4 != 0 || !isfinite(*p) || *p <= 0.0f || !g_signal_present) {
-            OLED_ShowString(self->cfg->x, self->cfg->y/8, (uint8_t*)"--- us", 16);
-            return;
-        }
-
-        uint32_t us = (uint32_t)(*p + 0.5f);
-        if (us >= 1000000) {
-            fmt_measure(buf, us/1000000, (us%1000000)/1000, 3, "s");
-        }
-        else if (us >= 1000) {
-            uint32_t ms = us / 1000, rem = us % 1000;
-            if (rem == 0) fmt_measure(buf, ms, 0, 0, "ms"); // 特殊：无小数
-            else if (rem >= 100) fmt_measure(buf, ms, rem/100, 1, "ms");
-            else if (rem >= 10)  fmt_measure(buf, ms, rem/10, 2, "ms");
-            else                 fmt_measure(buf, ms, rem, 3, "ms");
-        }
-        else {
-            fmt_measure(buf, us, 0, 0, "us"); // 特殊：无小数
-        }
-    }
-    else { return; }
-
-    OLED_ShowString(self->cfg->x, self->cfg->y / 8, (uint8_t *)buf, 16);
-}
-
-/* 渲染函数 - 状态显示 */
-static void render_status(ui_element_t *self)
-{
-    if (!self || !self->cfg)
-        return;
-
-    uint8_t page_start = self->cfg->y / 8;
-    uint8_t page_end = (self->cfg->y + self->cfg->h - 1) / 8;
-    if (page_end > 7)
-        page_end = 7;
-
-    /* 清空区域 */
-    for (uint8_t p = page_start; p <= page_end; p++)
-    {
-        OLED_Fill(self->cfg->x, p, self->cfg->x + self->cfg->w - 1, p, 0);
-    }
-
-    char buf[32] = {0};
-    
-    if (!self->data_binding)
-    {
-        strcpy(buf, "No Signal");
-        OLED_ShowString(self->cfg->x + 2, self->cfg->y / 8, (uint8_t *)buf, 16);
-        return;
-    }
-    
-    uint32_t *count = (uint32_t *)self->data_binding;
-
-    if (g_signal_present)
-    {
-        snprintf(buf, sizeof(buf), "Pulse:%lu OK", *count);
-    }
-    else
-    {
-        snprintf(buf, sizeof(buf), "No Signal");
-    }
-
-    OLED_ShowString(self->cfg->x + 2, self->cfg->y / 8, (uint8_t *)buf, 16);
-}
 
 /* ================= 初始化函数 ================= */
 bool pulse_freq_screen_init(void)

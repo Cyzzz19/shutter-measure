@@ -114,6 +114,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
   ui_init();
 
+  OLED_ShowIcon(0, 0, 0x00);
   if (!ui_input_bind_buttons(&my_buttons))
   {
     Error_Handler();
