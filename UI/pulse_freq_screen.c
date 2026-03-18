@@ -55,140 +55,105 @@ static void render_title(ui_element_t *self)
     OLED_ShowString(self->cfg->x, self->cfg->y / 8, (uint8_t *)self->cfg->text, 16);
 }
 
+static uint8_t *u32_to_str(uint8_t *dst, uint32_t val, uint8_t min_width)
+{
+    uint8_t tmp[12], *p = tmp;
+    do { *p++ = (val % 10) + '0'; val /= 10; } while (val);
+    
+    /* 补零 */
+    while (p - tmp < min_width) *p++ = '0';
+    
+    /* 反转写入 dst */
+    while (p > tmp) *dst++ = *--p;
+    return dst;
+}
+
+static void fmt_measure(char *buf, uint32_t i_part, uint32_t f_part, 
+                        uint8_t f_width, const char *unit)
+{
+    uint8_t *p = (uint8_t *)buf;
+    
+    /* 整数部分 */
+    p = u32_to_str(p, i_part, 1);
+    *p++ = '.';
+    
+    /* 小数部分 (固定宽度补零) */
+    p = u32_to_str(p, f_part, f_width);
+    
+    /* 单位 */
+    if (unit) {
+        *p++ = ' ';
+        while (*unit) *p++ = *unit++;
+    }
+    *p = '\0';
+}
+
 /* 渲染函数 - 显示数值 */
 static void render_value(ui_element_t *self)
 {
-    if (!self || !self->cfg)
+    if (!self || !self->cfg || !self->data_binding || !pulse_freq_screen_ptr) 
         return;
 
+    char buf[20]; 
     uint8_t page_start = self->cfg->y / 8;
     uint8_t page_end = (self->cfg->y + self->cfg->h - 1) / 8;
-    if (page_end > 7)
-        page_end = 7;
+    if (page_end > 7) page_end = 7;
 
-    /* 清空区域 */
     for (uint8_t p = page_start; p <= page_end; p++)
-    {
         OLED_Fill(self->cfg->x, p, self->cfg->x + self->cfg->w - 1, p, 0);
-    }
 
-    char buf[32] = {0};
-
-    if (self->data_binding)
+    /* ───────── 频率显示 ───────── */
+    if (self == elem_freq_value) 
     {
-        if (self == elem_freq_value)
-        {
-            /* 显示频率值 */
-            float *freq = (float *)self->data_binding;
-            if (*freq > 0 && g_signal_present)
-            {
-                if (*freq >= 1000.0f)
-                {
-                    // 转换为 kHz 显示
-                    uint32_t freq_khz = (uint32_t)(*freq / 1000.0f * 1000); // 保留3位小数
-                    uint32_t int_part = freq_khz / 1000;
-                    uint32_t frac_part = freq_khz % 1000;
-                    snprintf(buf, sizeof(buf), "%lu.%03lu kHz", int_part, frac_part);
-                }
-                else if (*freq >= 1.0f)
-                {
-                    // Hz 显示，保留2位小数
-                    uint32_t freq_hz = (uint32_t)(*freq * 100);
-                    uint32_t int_part = freq_hz / 100;
-                    uint32_t frac_part = freq_hz % 100;
-                    snprintf(buf, sizeof(buf), "%lu.%02lu Hz", int_part, frac_part);
-                }
-                else if (*freq > 0.001f)
-                {
-                    // mHz 显示
-                    uint32_t freq_mhz = (uint32_t)(*freq * 1000000); // 转换为 mHz * 1000
-                    uint32_t int_part = freq_mhz / 1000;
-                    uint32_t frac_part = freq_mhz % 1000;
-                    snprintf(buf, sizeof(buf), "%lu.%03lu mHz", int_part, frac_part);
-                }
-                else
-                {
-                    strcpy(buf, "<0.001 mHz");
-                }
-            }
-            else
-            {
-                strcpy(buf, "--- Hz");
-            }
+        float *f = (float *)self->data_binding;
+        /* ✅ 防御：对齐 + 有效性 */
+        if ((uint32_t)f % 4 != 0 || !isfinite(*f) || *f <= 0.0f || !g_signal_present) {
+            OLED_ShowString(self->cfg->x, self->cfg->y/8, (uint8_t*)"--- Hz", 16);
+            return;
         }
-        else if (self == elem_pulse_value)
-        {
-            /* 显示脉宽值 - 整数分块版本 */
-            float *pulse = (float *)self->data_binding;
-            if (*pulse > 0 && g_signal_present)
-            {
-                // 将浮点数转换为整数微秒（四舍五入）
-                uint32_t pulse_us = (uint32_t)(*pulse + 0.5f); // 微秒
 
-                if (pulse_us >= 1000000)
-                {
-                    // 大于等于1秒，显示为秒
-                    uint32_t seconds = pulse_us / 1000000;
-                    uint32_t ms_part = (pulse_us % 1000000) / 1000;
-                    snprintf(buf, sizeof(buf), "%lu.%03lu s", seconds, ms_part);
-                }
-                else if (pulse_us >= 1000)
-                {
-                    // 大于等于1ms，显示为毫秒
-                    uint32_t ms_value = pulse_us / 1000;
-                    uint32_t us_part = pulse_us % 1000;
-
-                    if (us_part == 0)
-                    {
-                        // 整毫秒
-                        snprintf(buf, sizeof(buf), "%lu ms", ms_value);
-                    }
-                    else
-                    {
-                        // 毫秒.微秒部分（只显示前1-2位有效数字）
-                        if (us_part >= 100)
-                        {
-                            // 显示1位小数（如 1.2ms = 1200us）
-                            snprintf(buf, sizeof(buf), "%lu.%lu ms",
-                                     ms_value, us_part / 100);
-                        }
-                        else if (us_part >= 10)
-                        {
-                            // 显示2位小数（如 1.23ms = 1230us）
-                            snprintf(buf, sizeof(buf), "%lu.%02lu ms",
-                                     ms_value, us_part / 10);
-                        }
-                        else
-                        {
-                            // 显示3位小数（如 1.003ms = 1003us）
-                            snprintf(buf, sizeof(buf), "%lu.%03lu ms",
-                                     ms_value, us_part);
-                        }
-                    }
-                }
-                else
-                {
-                    // 小于1ms，显示为微秒
-                    if (pulse_us >= 100)
-                    {
-                        snprintf(buf, sizeof(buf), "%lu us", pulse_us);
-                    }
-                    else if (pulse_us >= 10)
-                    {
-                        snprintf(buf, sizeof(buf), "%lu us", pulse_us);
-                    }
-                    else
-                    {
-                        snprintf(buf, sizeof(buf), "%lu us", pulse_us);
-                    }
-                }
-            }
-            else
-            {
-                strcpy(buf, "--- us");
-            }
+        if (*f >= 1000.0f) {
+            uint32_t v = (uint32_t)(*f / 1000.0f * 1000.0f);
+            fmt_measure(buf, v/1000, v%1000, 3, "kHz");
+        }
+        else if (*f >= 1.0f) {
+            uint32_t v = (uint32_t)(*f * 100.0f);
+            fmt_measure(buf, v/100, v%100, 2, "Hz");
+        }
+        else if (*f > 0.001f) {
+            uint32_t v = (uint32_t)(*f * 1000000.0f);
+            fmt_measure(buf, v/1000, v%1000, 3, "mHz");
+        }
+        else {
+            OLED_ShowString(self->cfg->x, self->cfg->y/8, (uint8_t*)"<0.001 mHz", 16);
+            return;
         }
     }
+    /* ───────── 脉宽显示 ───────── */
+    else if (self == elem_pulse_value) 
+    {
+        float *p = (float *)self->data_binding;
+        if ((uint32_t)p % 4 != 0 || !isfinite(*p) || *p <= 0.0f || !g_signal_present) {
+            OLED_ShowString(self->cfg->x, self->cfg->y/8, (uint8_t*)"--- us", 16);
+            return;
+        }
+
+        uint32_t us = (uint32_t)(*p + 0.5f);
+        if (us >= 1000000) {
+            fmt_measure(buf, us/1000000, (us%1000000)/1000, 3, "s");
+        }
+        else if (us >= 1000) {
+            uint32_t ms = us / 1000, rem = us % 1000;
+            if (rem == 0) fmt_measure(buf, ms, 0, 0, "ms"); // 特殊：无小数
+            else if (rem >= 100) fmt_measure(buf, ms, rem/100, 1, "ms");
+            else if (rem >= 10)  fmt_measure(buf, ms, rem/10, 2, "ms");
+            else                 fmt_measure(buf, ms, rem, 3, "ms");
+        }
+        else {
+            fmt_measure(buf, us, 0, 0, "us"); // 特殊：无小数
+        }
+    }
+    else { return; }
 
     OLED_ShowString(self->cfg->x, self->cfg->y / 8, (uint8_t *)buf, 16);
 }
@@ -211,6 +176,14 @@ static void render_status(ui_element_t *self)
     }
 
     char buf[32] = {0};
+    
+    if (!self->data_binding)
+    {
+        strcpy(buf, "No Signal");
+        OLED_ShowString(self->cfg->x + 2, self->cfg->y / 8, (uint8_t *)buf, 16);
+        return;
+    }
+    
     uint32_t *count = (uint32_t *)self->data_binding;
 
     if (g_signal_present)
@@ -221,8 +194,6 @@ static void render_status(ui_element_t *self)
     {
         snprintf(buf, sizeof(buf), "No Signal");
     }
-
-    /* 状态栏使用反色显示 */
 
     OLED_ShowString(self->cfg->x + 2, self->cfg->y / 8, (uint8_t *)buf, 16);
 }
